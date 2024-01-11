@@ -43,7 +43,10 @@ impl Byte {
 
     #[must_use]
     pub fn to_char(self) -> char {
-        u8::try_from(self.0).map_or_else(|_| panic!("Byte {} could not be read as ASCII char", self.0), char::from)
+        u8::try_from(self.0).map_or_else(
+            |_| panic!("Byte {} could not be read as ASCII char", self.0),
+            char::from,
+        )
     }
 
     #[must_use]

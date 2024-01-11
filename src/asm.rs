@@ -74,7 +74,9 @@ impl LabelMap {
     }
 
     pub fn get(&self, label: &Label) -> &String {
-        self.inner.get(label).unwrap_or_else(|| panic!("label '{}' not found", label.0))
+        self.inner
+            .get(label)
+            .unwrap_or_else(|| panic!("label '{}' not found", label.0))
     }
 
     pub fn insert(&mut self, label: Label, address: u16) {
@@ -118,9 +120,10 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
         });
     } else if opcode_parts.len() >= 2 {
         let operand_str = opcode_parts[1..].join(" ");
-        let operand = operand_str
-            .parse::<u16>()
-            .map_or_else(|_| Direct(Label(operand_str.to_ascii_lowercase())), Immediate);
+        let operand = operand_str.parse::<u16>().map_or_else(
+            |_| Direct(Label(operand_str.to_ascii_lowercase())),
+            Immediate,
+        );
         opcode = Some(match opcode_parts[0].to_ascii_lowercase().as_str() {
             "ld" => Ld(operand),
             "ldi" => Ldi(operand),
@@ -149,7 +152,7 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
             "push" => Push(operand),
             "pop" => Pop(operand),
             "pusha" => Pusha(operand),
-            "dc" => Dc(operand_str[1..operand_str.len() - 1].to_string()),
+            "dc" => Dc(operand_str[1..operand_str.len() - 1].replace("\\n", "\n")),
             "db" => Db(operand_str.parse().unwrap()),
             "ds" => Ds(operand_str.parse().unwrap()),
             _ => panic!("unrecognized operand"),
