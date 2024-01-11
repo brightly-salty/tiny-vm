@@ -117,10 +117,10 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
             s => panic!("unrecognized opcode at line {line_number}: {s}"),
         });
     } else if opcode_parts.len() >= 2 {
-        let operand_str = opcode_parts[1..].join(" ").to_ascii_lowercase();
+        let operand_str = opcode_parts[1..].join(" ");
         let operand = operand_str
             .parse::<u16>()
-            .map_or_else(|_| Direct(Label(operand_str.clone())), Immediate);
+            .map_or_else(|_| Direct(Label(operand_str.to_ascii_lowercase())), Immediate);
         opcode = Some(match opcode_parts[0].to_ascii_lowercase().as_str() {
             "ld" => Ld(operand),
             "ldi" => Ldi(operand),
@@ -135,7 +135,7 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
             "jg" => Jg(operand),
             "jl" => Jl(operand),
             "je" => Je(operand),
-            "call" => match operand_str.as_str() {
+            "call" => match operand_str.to_ascii_lowercase().as_str() {
                 "printinteger" => CallPrintInteger,
                 "printstring" => CallPrintString,
                 "inputinteger" => CallInputInteger,
