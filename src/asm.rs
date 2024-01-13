@@ -155,7 +155,7 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
             "dc" => Dc(operand_str[1..operand_str.len() - 1].replace("\\n", "\n")),
             "db" => Db(operand_str.parse().unwrap()),
             "ds" => Ds(operand_str.parse().unwrap()),
-            _ => panic!("unrecognized operand"),
+            s => panic!("unrecognized operand at line {line_number}: {s}"),
         });
     }
 

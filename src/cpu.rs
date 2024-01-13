@@ -1,4 +1,5 @@
-use console::Term;
+use std::io::Read;
+use std::io::Write;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct Address(u16); //0-999 (3 decimal digits)
@@ -184,7 +185,10 @@ impl Cpu {
                     self.alu.acc.0 /= self.imm().0;
                 }
                 10 => {
-                    self.alu.acc = Byte::from_char(Term::stdout().read_char().unwrap());
+                    let mut stdin = std::io::stdin();
+                    let mut buf = [0; 2];
+                    stdin.read_exact(&mut buf).unwrap();
+                    self.alu.acc = Byte::from_char(char::from(buf[0]));
                 }
                 11 => {
                     print!("{}", self.alu.acc.to_char());
@@ -291,25 +295,37 @@ impl Cpu {
 
     fn print_integer(&self) {
         print!("{}", self.alu.acc.0);
+        let mut stdout = std::io::stdout();
+        stdout.flush().unwrap();
     }
 
     fn print_string(&self) {
         let mut addr = Address::from_byte(self.alu.acc);
+        let mut buffer = String::new();
         let mut value = self.c(addr);
         while value != Byte(0) {
-            print!("{}", value.to_char());
+            buffer.push(value.to_char());
             addr.0 += 1;
             value = self.c(addr);
         }
+        print!("{buffer}");
+        let mut stdout = std::io::stdout();
+        stdout.flush().unwrap();
     }
 
     fn input_integer(&mut self) {
-        self.alu.acc = Byte(Term::stdout().read_line().unwrap().parse().unwrap());
+        let stdin = std::io::stdin();
+        let mut buffer = String::new();
+        stdin.read_line(&mut buffer).unwrap();
+        self.alu.acc = Byte(buffer.trim().parse().unwrap());
     }
 
     fn input_string(&mut self) {
+        let stdin = std::io::stdin();
+        let mut buffer = String::new();
+        stdin.read_line(&mut buffer).unwrap();
         let mut addr = Address::from_byte(self.alu.acc);
-        for c in Term::stdout().read_line().unwrap().chars() {
+        for c in buffer.trim().chars() {
             self.memory.set_contents(addr, Byte::from_char(c));
             addr.0 += 1;
         }
