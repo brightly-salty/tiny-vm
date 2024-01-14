@@ -71,6 +71,7 @@ pub struct Instruction {
     operand: Address,
 }
 
+#[derive(Clone, Copy)]
 pub struct Memory([Byte; 1000]);
 
 impl Memory {
@@ -98,12 +99,13 @@ impl IndexMut<Address> for Memory {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Cu {
     ip: Address,
     ir: Instruction,
 }
 
+#[derive(Clone)]
 pub struct Alu {
     acc: Byte,
     sp: Address,
@@ -120,6 +122,7 @@ impl Alu {
     }
 }
 
+#[derive(Clone)]
 pub struct Cpu {
     cu: Cu,
     alu: Alu,
