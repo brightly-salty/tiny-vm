@@ -375,7 +375,6 @@ impl Cpu {
     }
 
     pub fn parse_machine_code(&mut self, s: &str) {
-        println!("{s}");
         for line in s.lines() {
             let words: Vec<_> = line.split_whitespace().collect();
             if words.len() >= 2 {
