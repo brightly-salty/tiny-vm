@@ -1,30 +1,21 @@
 use std::io::Read;
 use std::io::Write;
+use std::ops::{Index, IndexMut};
+use rand::Rng;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct Address(u16); //0-999 (3 decimal digits)
 
 impl Address {
     #[must_use]
-    pub fn from_instruction(n: u32) -> Self {
-        match u16::try_from(n % 1000) {
-            Ok(n) if n < 1000 => Self(n),
-            _ => panic!("Operand of instruction {n} was invalid"),
-        }
-    }
-
-    #[must_use]
-    pub fn from_byte(b: Byte) -> Self {
-        match u16::try_from(b.0) {
-            Ok(n) if n < 1000 => Self(n),
-            _ => panic!("Byte {} could not be read as address", b.0),
-        }
-    }
-
-    #[must_use]
     pub fn new(b: u16) -> Self {
         debug_assert!(b < 1000);
         Self(b)
+    }
+
+    #[must_use]
+    pub fn into_byte(self) -> Byte {
+        Byte(i32::from(self.0))
     }
 }
 
@@ -32,9 +23,25 @@ impl Address {
 pub struct Byte(i32); //-99999-99999 (5 decimal digits plus sign)
 
 impl Byte {
-    #[must_use]
-    pub fn from_address(a: Address) -> Self {
-        Self(i32::from(a.0))
+    pub fn read_as_instruction(self) -> Instruction {
+        match u32::try_from(self.0) {
+            Ok(n) if n < 100_000 => Instruction {
+                opcode: u8::try_from(n / 1000)
+                    .map_or_else(|_| panic!("Opcode of instruction {n} was invalid"), Opcode),
+                operand: u16::try_from(n % 1000).map_or_else(
+                    |_| panic!("Operand of instruction {n} was invalid"),
+                    Address,
+                ),
+            },
+            _ => panic!("Byte {} could not be read as instruction", self.0),
+        }
+    }
+
+    pub fn read_as_address(self) -> Address {
+        match u16::try_from(self.0) {
+            Ok(n) if n < 1000 => Address(n),
+            _ => panic!("Byte {} could not be read as address", self.0),
+        }
     }
 
     #[must_use]
@@ -43,7 +50,7 @@ impl Byte {
     }
 
     #[must_use]
-    pub fn to_char(self) -> char {
+    pub fn read_as_char(self) -> char {
         u8::try_from(self.0).map_or_else(
             |_| panic!("Byte {} could not be read as ASCII char", self.0),
             char::from,
@@ -60,51 +67,50 @@ impl Byte {
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct Opcode(u8); //0-99 (2 decimal digits)
 
-impl Opcode {
-    #[must_use]
-    pub fn from_instruction(n: u32) -> Self {
-        match u8::try_from(n / 1000) {
-            Ok(n) if n < 100 => Self(n),
-            _ => panic!("Opcode of instruction {n} was invalid"),
-        }
-    }
-}
-
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct Instruction {
     opcode: Opcode,
     operand: Address,
 }
 
-impl Instruction {
-    #[must_use]
-    pub fn from_byte(b: Byte) -> Self {
-        match u32::try_from(b.0) {
-            Ok(n) if n < 100_000 => Self {
-                opcode: Opcode::from_instruction(n),
-                operand: Address::from_instruction(n),
-            },
-            _ => panic!("Byte {} could not be read as instruction", b.0),
-        }
-    }
-}
-
 pub struct Memory([Byte; 1000]);
 
-impl Default for Memory {
-    fn default() -> Self {
-        Self([Byte(0); 1000])
+impl Memory {
+    fn new() -> Self {
+        let mut rng = rand::thread_rng();
+        let mut buffer = [Byte(0); 1000];
+        for n in &mut buffer {
+            *n = Byte(rng.gen_range(0..10_000));
+        }
+        Self(buffer)
     }
 }
 
-impl Memory {
-    #[must_use]
-    pub const fn get_contents(&self, addr: Address) -> Byte {
-        self.0[addr.0 as usize]
-    }
+impl Index<Address> for Memory {
+    type Output = Byte;
 
-    pub fn set_contents(&mut self, addr: Address, b: Byte) {
-        self.0[addr.0 as usize] = b;
+    fn index(&self, index: Address) -> &Byte {
+        &self.0[index.0 as usize]
+    }
+}
+
+impl IndexMut<Address> for Memory {
+    fn index_mut(&mut self, index: Address) -> &mut Byte {
+        &mut self.0[index.0 as usize]
+    }
+}
+
+impl Index<Byte> for Memory {
+    type Output = Byte;
+
+    fn index(&self, index: Byte) -> &Byte {
+        &self[index.read_as_address()]
+    }
+}
+
+impl IndexMut<Byte> for Memory {
+    fn index_mut(&mut self, index: Byte) -> &mut Byte {
+        &mut self[index.read_as_address()]
     }
 }
 
@@ -114,14 +120,22 @@ pub struct Cu {
     ir: Instruction,
 }
 
-#[derive(Default)]
 pub struct Alu {
     acc: Byte,
     sp: Address,
     bp: Address,
 }
 
-#[derive(Default)]
+impl Alu {
+    const fn new() -> Self {
+        Self {
+            acc: Byte(0),
+            sp: Address(900),
+            bp: Address(900),
+        }
+    }
+}
+
 pub struct Cpu {
     cu: Cu,
     alu: Alu,
@@ -131,7 +145,11 @@ pub struct Cpu {
 impl Cpu {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            cu: Cu::default(),
+            alu: Alu::new(),
+            memory: Memory::new(),
+        }
     }
 
     /// # Panics
@@ -140,75 +158,78 @@ impl Cpu {
     #[allow(clippy::too_many_lines)]
     pub fn run(&mut self) {
         loop {
-            self.cu.ir = Instruction::from_byte(self.c(self.cu.ip));
+            self.cu.ir = self.memory[self.cu.ip].read_as_instruction();
             self.cu.ip.0 += 1;
             let adr = self.cu.ir.operand;
+            let c_adr = || self.memory[adr];
+            let c_c_adr = || self.memory[c_adr()];
+            let imm = || self.cu.ir.operand.into_byte();
             match self.cu.ir.opcode.0 {
                 0 => break,
                 1 => {
-                    self.alu.acc = self.c(adr);
+                    self.load_into_acc(c_adr());
                 }
                 91 | 3 => {
-                    self.alu.acc = self.imm();
+                    self.load_into_acc(imm());
                 }
                 2 => {
-                    self.alu.acc = self.c_c(adr);
+                    self.load_into_acc(c_c_adr());
                 }
                 4 => {
-                    self.memory.set_contents(self.cu.ir.operand, self.alu.acc);
+                    self.store_acc_into(adr);
                 }
                 5 => {
-                    self.set_c(Address::from_byte(self.c(adr)), self.alu.acc);
+                    self.store_acc_into(c_adr().read_as_address());
                 }
                 6 => {
-                    self.alu.acc.0 += self.c(adr).0;
+                    self.add_to_acc(c_adr());
                 }
                 96 => {
-                    self.alu.acc.0 += self.imm().0;
+                    self.add_to_acc(imm());
                 }
                 7 => {
-                    self.alu.acc.0 -= self.c(adr).0;
+                    self.sub_from_acc(c_adr());
                 }
                 97 => {
-                    self.alu.acc.0 -= self.imm().0;
+                    self.sub_from_acc(imm());
                 }
                 8 => {
-                    self.alu.acc.0 *= self.c(adr).0;
+                    self.mul_acc_by(c_adr());
                 }
                 98 => {
-                    self.alu.acc.0 *= self.imm().0;
+                    self.mul_acc_by(imm());
                 }
                 9 => {
-                    self.alu.acc.0 /= self.c(adr).0;
+                    self.div_acc_by(c_adr());
                 }
                 99 => {
-                    self.alu.acc.0 /= self.imm().0;
+                    self.div_acc_by(imm());
                 }
                 10 => {
                     let mut stdin = std::io::stdin();
                     let mut buf = [0; 2];
                     stdin.read_exact(&mut buf).unwrap();
-                    self.alu.acc = Byte::from_char(char::from(buf[0]));
+                    self.load_into_acc(Byte::from_char(char::from(buf[0])));
                 }
                 11 => {
-                    print!("{}", self.alu.acc.to_char());
+                    print!("{}", self.alu.acc.read_as_char());
                 }
                 12 => {
-                    self.cu.ip = adr;
+                    self.jump_to(adr);
                 }
                 13 => {
                     if self.alu.acc.0 > 0 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 14 => {
                     if self.alu.acc.0 < 1 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 15 => {
                     if self.alu.acc.0 == 0 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 16 => match self.cu.ir.operand {
@@ -217,96 +238,117 @@ impl Cpu {
                     Address(950) => self.input_integer(),
                     Address(975) => self.input_string(),
                     _ => {
-                        self.alu.sp.0 -= 1;
-                        self.memory
-                            .set_contents(self.alu.sp, Byte::from_address(self.cu.ip));
-                        self.alu.sp.0 -= 1;
-                        self.memory
-                            .set_contents(self.alu.sp, Byte::from_address(self.alu.bp));
-                        self.alu.bp = self.alu.sp;
-                        self.cu.ip = adr;
+                        // Push a call-frame onto the stack
+                        self.push(self.cu.ip.into_byte()); // push return address
+                        self.push(self.alu.bp.into_byte()); // push previous value of BP
+                        self.alu.bp = self.alu.sp; // update value of BF
+                        self.jump_to(adr); // jump to start of function
                     }
                 },
                 17 => {
-                    self.alu.sp = self.alu.bp;
-                    self.alu.bp = Address::from_byte(self.c(self.alu.sp));
-                    self.alu.sp.0 += 1;
-                    self.cu.ip = Address::from_byte(self.c(self.alu.sp));
-                    self.alu.sp.0 += 1;
+                    self.alu.sp = self.alu.bp; // pop call-frame off the stack
+                    self.alu.bp = self.pop().read_as_address(); // restore BP to its previous value
+                    let address = self.pop().read_as_address();
+                    self.jump_to(address); // restore IP to return address
                 }
                 18 => {
-                    self.alu.sp.0 -= 1;
-                    self.set_c(self.alu.sp, self.alu.acc);
+                    self.push(self.alu.acc);
                 }
                 19 => {
-                    self.alu.acc = self.c(self.alu.sp);
-                    self.alu.sp.0 += 1;
+                    let byte = self.pop();
+                    self.load_into_acc(byte);
                 }
                 20 => {
-                    self.alu.acc = self.c(Address(self.alu.bp.0 + self.cu.ir.operand.0 + 1));
+                    self.load_into_acc(
+                        self.memory[Address(self.alu.bp.0 + self.cu.ir.operand.0 + 1)],
+                    );
                 }
                 21 => {
                     if self.alu.acc.0 >= 0 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 22 => {
                     if self.alu.acc.0 <= 1 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 23 => {
                     if self.alu.acc.0 != 0 {
-                        self.cu.ip = adr;
+                        self.jump_to(adr);
                     }
                 }
                 24 => {
-                    self.alu.sp.0 -= 1;
-                    self.set_c(self.alu.sp, self.c(adr));
+                    self.push(c_adr());
                 }
                 25 => {
-                    self.set_c(adr, self.c(self.alu.sp));
-                    self.alu.sp.0 += 1;
+                    let byte = self.pop();
+                    let address = self.memory[adr];
+                    self.memory[address] = byte;
                 }
                 26 => {
-                    self.alu.sp.0 -= 1;
-                    self.set_c(self.alu.sp, Byte::from_address(adr));
+                    self.push(adr.into_byte());
                 }
                 _ => panic!("unrecognized opcode"),
             }
         }
     }
 
-    const fn c(&self, adr: Address) -> Byte {
-        self.memory.get_contents(adr)
+    fn load_into_acc(&mut self, b: Byte) {
+        self.alu.acc = b;
     }
 
-    fn c_c(&self, adr: Address) -> Byte {
-        self.c(Address::from_byte(self.c(adr)))
+    fn store_acc_into(&mut self, address: Address) {
+        self.memory[address] = self.alu.acc;
     }
 
-    fn set_c(&mut self, adr: Address, b: Byte) {
-        self.memory.set_contents(Address::from_byte(self.c(adr)), b);
+    fn add_to_acc(&mut self, b: Byte) {
+        self.alu.acc.0 += b.0;
     }
 
-    fn imm(&self) -> Byte {
-        Byte::from_address(self.cu.ir.operand)
+    fn sub_from_acc(&mut self, b: Byte) {
+        self.alu.acc.0 -= b.0;
+    }
+
+    fn mul_acc_by(&mut self, b: Byte) {
+        self.alu.acc.0 *= b.0;
+    }
+
+    fn div_acc_by(&mut self, b: Byte) {
+        self.alu.acc.0 /= b.0;
+    }
+
+    fn push(&mut self, byte: Byte) {
+        self.alu.sp.0 -= 1;
+        let address = self.memory[self.alu.sp].read_as_address();
+        self.memory[address] = byte;
+    }
+
+    fn jump_to(&mut self, adr: Address) {
+        self.cu.ip = adr;
+    }
+
+    #[must_use]
+    fn pop(&mut self) -> Byte {
+        let byte = self.memory[self.alu.sp];
+        self.alu.sp.0 += 1;
+        byte
     }
 
     fn print_integer(&self) {
-        print!("{}", self.alu.acc.0);
+        println!("{}", self.alu.acc.0);
         let mut stdout = std::io::stdout();
         stdout.flush().unwrap();
     }
 
     fn print_string(&self) {
-        let mut addr = Address::from_byte(self.alu.acc);
+        let mut addr = self.alu.acc;
         let mut buffer = String::new();
-        let mut value = self.c(addr);
+        let mut value = self.memory[addr];
         while value != Byte(0) {
-            buffer.push(value.to_char());
+            buffer.push(value.read_as_char());
             addr.0 += 1;
-            value = self.c(addr);
+            value = self.memory[addr];
         }
         print!("{buffer}");
         let mut stdout = std::io::stdout();
@@ -317,28 +359,28 @@ impl Cpu {
         let stdin = std::io::stdin();
         let mut buffer = String::new();
         stdin.read_line(&mut buffer).unwrap();
-        self.alu.acc = Byte(buffer.trim().parse().unwrap());
+        self.load_into_acc(Byte(buffer.trim().parse().unwrap()));
     }
 
     fn input_string(&mut self) {
         let stdin = std::io::stdin();
         let mut buffer = String::new();
         stdin.read_line(&mut buffer).unwrap();
-        let mut addr = Address::from_byte(self.alu.acc);
+        let mut addr = self.alu.acc;
         for c in buffer.trim().chars() {
-            self.memory.set_contents(addr, Byte::from_char(c));
+            self.memory[addr] = Byte::from_char(c);
             addr.0 += 1;
         }
-        self.memory.set_contents(addr, Byte(0));
+        self.memory[addr] = Byte(0);
     }
 
     pub fn parse_machine_code(&mut self, s: &str) {
+        println!("{s}");
         for line in s.lines() {
             let words: Vec<_> = line.split_whitespace().collect();
             if words.len() >= 2 {
-                let address = Address::new(words[0].parse().unwrap());
-                let instruction = Byte::new(words[1].parse().unwrap());
-                self.memory.set_contents(address, instruction);
+                self.memory[Address::new(words[0].parse().unwrap())] =
+                    Byte::new(words[1].parse().unwrap());
             }
         }
     }

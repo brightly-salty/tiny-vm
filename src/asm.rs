@@ -3,14 +3,20 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct Label(String);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Operand {
     Direct(Label),  // must match operand
     Immediate(u16), // 0-999
 }
 
-#[derive(Clone)]
-enum Opcode {
+#[derive(Debug, Clone)]
+struct Opcode {
+    ln: usize,
+    oc: OpcodeEnum,
+}
+
+#[derive(Debug, Clone)]
+enum OpcodeEnum {
     Stop,
     Ld(Operand),
     Ldi(Operand),
@@ -54,8 +60,9 @@ struct Instruction {
 
 impl Opcode {
     pub fn len(&self) -> u16 {
-        match self {
-            Self::Dc(s) => u16::try_from(s.chars().count()).unwrap() + 1,
+        match &self.oc {
+            OpcodeEnum::Dc(s) => u16::try_from(s.chars().count()).unwrap() + 1,
+            OpcodeEnum::Ds(n) => u16::try_from(*n).unwrap(),
             _ => 1,
         }
     }
@@ -73,10 +80,10 @@ impl LabelMap {
         }
     }
 
-    pub fn get(&self, label: &Label) -> &String {
+    pub fn get(&self, ln: usize, label: &Label) -> &String {
         self.inner
             .get(label)
-            .unwrap_or_else(|| panic!("label '{}' not found", label.0))
+            .unwrap_or_else(|| panic!("unknown operand at line {ln}: '{}'", label.0))
     }
 
     pub fn insert(&mut self, label: Label, address: u16) {
@@ -94,8 +101,8 @@ pub fn assemble(asm: &str) -> String {
     create_machine_code(&map, instructions)
 }
 
-fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
-    use Opcode::*;
+fn line_to_instruction(ln: usize, mut line: &str) -> Instruction {
+    use OpcodeEnum::*;
     use Operand::*;
     line = line.split(';').next().unwrap();
     let split_by_colon: Vec<_> = line.split(':').collect();
@@ -109,14 +116,17 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
     };
     let opcode_parts: Vec<&str> = rest.split_whitespace().collect();
     if opcode_parts.len() == 1 {
-        opcode = Some(match opcode_parts[0].to_ascii_lowercase().as_str() {
-            "stop" => Stop,
-            "in" => In,
-            "out" => Out,
-            "ret" => Ret,
-            "push" => Push_,
-            "pop" => Pop_,
-            s => panic!("unrecognized opcode at line {line_number}: {s}"),
+        opcode = Some(Opcode {
+            ln,
+            oc: match opcode_parts[0].to_ascii_lowercase().as_str() {
+                "stop" => Stop,
+                "in" => In,
+                "out" => Out,
+                "ret" => Ret,
+                "push" => Push_,
+                "pop" => Pop_,
+                s => panic!("unrecognized opcode at line {ln}: {s}"),
+            },
         });
     } else if opcode_parts.len() >= 2 {
         let operand_str = opcode_parts[1..].join(" ");
@@ -124,38 +134,41 @@ fn line_to_instruction(line_number: usize, mut line: &str) -> Instruction {
             |_| Direct(Label(operand_str.to_ascii_lowercase())),
             Immediate,
         );
-        opcode = Some(match opcode_parts[0].to_ascii_lowercase().as_str() {
-            "ld" => Ld(operand),
-            "ldi" => Ldi(operand),
-            "lda" => Lda(operand),
-            "st" => St(operand),
-            "sti" => Sti(operand),
-            "add" => Add(operand),
-            "sub" => Sub(operand),
-            "mul" => Mul(operand),
-            "div" => Div(operand),
-            "jmp" => Jmp(operand),
-            "jg" => Jg(operand),
-            "jl" => Jl(operand),
-            "je" => Je(operand),
-            "call" => match operand_str.to_ascii_lowercase().as_str() {
-                "printinteger" => CallPrintInteger,
-                "printstring" => CallPrintString,
-                "inputinteger" => CallInputInteger,
-                "inputstring" => CallInputString,
-                _ => Call(operand),
+        opcode = Some(Opcode {
+            ln,
+            oc: match opcode_parts[0].to_ascii_lowercase().as_str() {
+                "ld" => Ld(operand),
+                "ldi" => Ldi(operand),
+                "lda" => Lda(operand),
+                "st" => St(operand),
+                "sti" => Sti(operand),
+                "add" => Add(operand),
+                "sub" => Sub(operand),
+                "mul" => Mul(operand),
+                "div" => Div(operand),
+                "jmp" => Jmp(operand),
+                "jg" => Jg(operand),
+                "jl" => Jl(operand),
+                "je" => Je(operand),
+                "call" => match operand_str.to_ascii_lowercase().as_str() {
+                    "printinteger" => CallPrintInteger,
+                    "printstring" => CallPrintString,
+                    "inputinteger" => CallInputInteger,
+                    "inputstring" => CallInputString,
+                    _ => Call(operand),
+                },
+                "ldparam" => Ldparam(operand),
+                "jge" => Jge(operand),
+                "jle" => Jle(operand),
+                "jne" => Jne(operand),
+                "push" => Push(operand),
+                "pop" => Pop(operand),
+                "pusha" => Pusha(operand),
+                "dc" => Dc(operand_str[1..operand_str.len() - 1].replace("\\n", "\n")),
+                "db" => Db(operand_str.parse().unwrap()),
+                "ds" => Ds(operand_str.parse().unwrap()),
+                s => panic!("unrecognized operand at line {ln}: {s}"),
             },
-            "ldparam" => Ldparam(operand),
-            "jge" => Jge(operand),
-            "jle" => Jle(operand),
-            "jne" => Jne(operand),
-            "push" => Push(operand),
-            "pop" => Pop(operand),
-            "pusha" => Pusha(operand),
-            "dc" => Dc(operand_str[1..operand_str.len() - 1].replace("\\n", "\n")),
-            "db" => Db(operand_str.parse().unwrap()),
-            "ds" => Ds(operand_str.parse().unwrap()),
-            s => panic!("unrecognized operand at line {line_number}: {s}"),
         });
     }
 
@@ -224,42 +237,42 @@ fn create_machine_code(map: &LabelMap, opcodes: Vec<Opcode>) -> String {
 }
 
 fn opcode_to_machine(map: &LabelMap, a: u16, opcode: Opcode) -> (u16, String) {
-    use Opcode::*;
+    use OpcodeEnum::*;
     use Operand::*;
     let mut new_address = a + 1;
-    let new_string = match opcode {
+    let new_string = match opcode.oc {
         Stop => format!("{} 00000\n", pad_num(a)),
-        Ld(Direct(label)) => format!("{} 01{}\n", pad_num(a), map.get(&label)),
+        Ld(Direct(label)) => format!("{} 01{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Ld(Immediate(n)) => format!("{} 91{}\n", pad_num(a), pad_num(n)),
-        Ldi(Direct(label)) => format!("{} 02{}\n", pad_num(a), map.get(&label)),
-        Lda(Direct(label)) => format!("{} 03{}\n", pad_num(a), map.get(&label)),
-        St(Direct(label)) => format!("{} 04{}\n", pad_num(a), map.get(&label)),
-        Sti(Direct(label)) => format!("{} 05{}\n", pad_num(a), map.get(&label)),
-        Add(Direct(label)) => format!("{} 06{}\n", pad_num(a), map.get(&label)),
+        Ldi(Direct(label)) => format!("{} 02{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Lda(Direct(label)) => format!("{} 03{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        St(Direct(label)) => format!("{} 04{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Sti(Direct(label)) => format!("{} 05{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Add(Direct(label)) => format!("{} 06{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Add(Immediate(n)) => format!("{} 96{}\n", pad_num(a), pad_num(n)),
-        Sub(Direct(label)) => format!("{} 07{}\n", pad_num(a), map.get(&label)),
+        Sub(Direct(label)) => format!("{} 07{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Sub(Immediate(n)) => format!("{} 97{}\n", pad_num(a), pad_num(n)),
-        Mul(Direct(label)) => format!("{} 08{}\n", pad_num(a), map.get(&label)),
+        Mul(Direct(label)) => format!("{} 08{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Mul(Immediate(n)) => format!("{} 98{}\n", pad_num(a), pad_num(n)),
-        Div(Direct(label)) => format!("{} 09{}\n", pad_num(a), map.get(&label)),
+        Div(Direct(label)) => format!("{} 09{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Div(Immediate(n)) => format!("{} 99{}\n", pad_num(a), pad_num(n)),
         In => format!("{} 10000\n", pad_num(a)),
         Out => format!("{} 11000\n", pad_num(a)),
-        Jmp(Direct(label)) => format!("{} 12{}\n", pad_num(a), map.get(&label)),
-        Jg(Direct(label)) => format!("{} 13{}\n", pad_num(a), map.get(&label)),
-        Jl(Direct(label)) => format!("{} 14{}\n", pad_num(a), map.get(&label)),
-        Je(Direct(label)) => format!("{} 15{}\n", pad_num(a), map.get(&label)),
-        Call(Direct(label)) => format!("{} 16{}\n", pad_num(a), map.get(&label)),
+        Jmp(Direct(label)) => format!("{} 12{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Jg(Direct(label)) => format!("{} 13{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Jl(Direct(label)) => format!("{} 14{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Je(Direct(label)) => format!("{} 15{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Call(Direct(label)) => format!("{} 16{}\n", pad_num(a), map.get(opcode.ln, &label)),
         Ret => format!("{} 17000\n", pad_num(a)),
         Push_ => format!("{} 18000\n", pad_num(a)),
         Pop_ => format!("{} 19000\n", pad_num(a)),
         Ldparam(Immediate(n)) => format!("{} 20{}\n", pad_num(a), pad_num(n)),
-        Jge(Direct(label)) => format!("{} 21{}\n", pad_num(a), map.get(&label)),
-        Jle(Direct(label)) => format!("{} 22{}\n", pad_num(a), map.get(&label)),
-        Jne(Direct(label)) => format!("{} 23{}\n", pad_num(a), map.get(&label)),
-        Push(Direct(label)) => format!("{} 24{}\n", pad_num(a), map.get(&label)),
-        Pop(Direct(label)) => format!("{} 25{}\n", pad_num(a), map.get(&label)),
-        Pusha(Direct(label)) => format!("{} 26{}\n", pad_num(a), map.get(&label)),
+        Jge(Direct(label)) => format!("{} 21{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Jle(Direct(label)) => format!("{} 22{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Jne(Direct(label)) => format!("{} 23{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Push(Direct(label)) => format!("{} 24{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Pop(Direct(label)) => format!("{} 25{}\n", pad_num(a), map.get(opcode.ln, &label)),
+        Pusha(Direct(label)) => format!("{} 26{}\n", pad_num(a), map.get(opcode.ln, &label)),
         CallPrintInteger => format!("{} 16900\n", pad_num(a)),
         CallPrintString => format!("{} 16925\n", pad_num(a)),
         CallInputInteger => format!("{} 16950\n", pad_num(a)),
@@ -286,7 +299,7 @@ fn opcode_to_machine(map: &LabelMap, a: u16, opcode: Opcode) -> (u16, String) {
             new_address = x + 1;
             s
         }
-        _ => panic!(),
+        x => panic!("Do not know how to execute {x:?} at line {}", opcode.ln),
     };
     (new_address, new_string)
 }
