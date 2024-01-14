@@ -11,5 +11,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let assembly = read_to_string(args.filename).expect("Could not open assembly file to read");
-    tiny_vm::run_assembly(&assembly);
+    match tiny_vm::run_assembly(&assembly) {
+        Ok(_) => {}
+        Err(s) => println!("ERR: {s}"),
+    }
 }
