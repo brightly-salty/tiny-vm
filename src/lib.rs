@@ -23,8 +23,8 @@ pub use cpu::Cpu;
 ///
 /// Will return an `Err` if the assembly could not be assembled
 pub fn run_assembly(s: &str) -> Result<(), String> {
-    let machine_code = assemble(s)?;
+    let (map, machine_code) = assemble(s)?;
     let mut cpu = Cpu::new();
-    cpu.parse_machine_code(&machine_code);
+    cpu.parse_machine_code(map, &machine_code);
     cpu.run()
 }

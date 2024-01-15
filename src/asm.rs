@@ -69,6 +69,8 @@ impl Opcode {
     }
 }
 
+type SymbolTable = HashMap<String, String>;
+
 #[derive(Debug)]
 struct LabelMap {
     inner: HashMap<Label, String>,
@@ -92,17 +94,27 @@ impl LabelMap {
     }
 }
 
+fn create_symbol_table(map: LabelMap) -> SymbolTable {
+    let mut symbol_table = HashMap::new();
+    for (k, v) in map.inner {
+        symbol_table.insert(v, k.0);
+    }
+    symbol_table
+}
+
 /// # Errors
 ///
 /// Will return `Err` if there was an error
-pub fn assemble(asm: &str) -> Result<String, String> {
+pub fn assemble(asm: &str) -> Result<(SymbolTable, String), String> {
     let lines = asm.lines();
     let parsed_instructions: Result<Vec<_>, _> = lines
         .enumerate()
         .map(|(n, s)| line_to_instruction(n, s))
         .collect();
     let (instructions, map) = first_pass(&parsed_instructions?);
-    create_machine_code(&map, instructions)
+    let machine_code = create_machine_code(&map, instructions)?;
+    let symbol_table = create_symbol_table(map);
+    Ok((symbol_table, machine_code))
 }
 
 fn line_to_instruction(ln: usize, mut line: &str) -> Result<Instruction, String> {
