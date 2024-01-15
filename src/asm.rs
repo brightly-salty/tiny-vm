@@ -71,6 +71,8 @@ impl Opcode {
 
 type SymbolTable = HashMap<String, String>;
 
+type SourceMap = HashMap<u16, usize>;
+
 #[derive(Debug)]
 struct LabelMap {
     inner: HashMap<Label, String>,
@@ -95,26 +97,31 @@ impl LabelMap {
 }
 
 fn create_symbol_table(map: LabelMap) -> SymbolTable {
-    let mut symbol_table = HashMap::new();
+    let mut symbols = HashMap::new();
+
+    symbols.insert("900".to_owned(), "printInteger".to_owned());
+    symbols.insert("925".to_owned(), "printString".to_owned());
+    symbols.insert("950".to_owned(), "inputInteger".to_owned());
+    symbols.insert("975".to_owned(), "inputString".to_owned());
     for (k, v) in map.inner {
-        symbol_table.insert(v, k.0);
+        symbols.insert(v, k.0);
     }
-    symbol_table
+    symbols
 }
 
 /// # Errors
 ///
 /// Will return `Err` if there was an error
-pub fn assemble(asm: &str) -> Result<(SymbolTable, String), String> {
+pub fn assemble(asm: &str) -> Result<(SymbolTable, SourceMap, String), String> {
     let lines = asm.lines();
     let parsed_instructions: Result<Vec<_>, _> = lines
         .enumerate()
         .map(|(n, s)| line_to_instruction(n, s))
         .collect();
-    let (instructions, map) = first_pass(&parsed_instructions?);
+    let (instructions, map, source_map) = first_pass(&parsed_instructions?);
     let machine_code = create_machine_code(&map, instructions)?;
     let symbol_table = create_symbol_table(map);
-    Ok((symbol_table, machine_code))
+    Ok((symbol_table, source_map, machine_code))
 }
 
 fn line_to_instruction(ln: usize, mut line: &str) -> Result<Instruction, String> {
@@ -192,11 +199,12 @@ fn line_to_instruction(ln: usize, mut line: &str) -> Result<Instruction, String>
     Ok(Instruction { label, opcode })
 }
 
-fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap) {
+fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap, SourceMap) {
     let mut instructions = vec![];
     let mut i = 0;
     let mut stored_label = None;
-    let mut map = LabelMap::new();
+    let mut label_map = LabelMap::new();
+    let mut source_map = HashMap::new();
     let mut address = 0;
     while i < input.len() {
         let cur = &input[i];
@@ -206,22 +214,24 @@ fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap) {
                 stored_label = Some(label.clone());
             }
             (Some(label), Some(oc)) => {
-                map.insert(label.clone(), address);
+                label_map.insert(label.clone(), address);
+                source_map.insert(address, oc.ln);
                 instructions.push(oc.clone());
                 address = address.saturating_add(oc.len());
             }
             (None, Some(oc)) => {
                 let label = stored_label.take();
                 instructions.push(oc.clone());
+                source_map.insert(address, oc.ln);
                 if let Some(l) = label {
-                    map.insert(l, address);
+                    label_map.insert(l, address);
                 }
                 address = address.saturating_add(oc.len());
             }
         }
         i = i.saturating_add(1);
     }
-    (instructions, map)
+    (instructions, label_map, source_map)
 }
 
 fn pad_num(n: u16) -> String {

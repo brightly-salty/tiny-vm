@@ -15,16 +15,15 @@
     clippy::unwrap_in_result
 )]
 mod asm;
-mod cpu;
+pub mod cpu;
 pub use asm::assemble;
-pub use cpu::Cpu;
 
 /// # Errors
 ///
 /// Will return an `Err` if the assembly could not be assembled
 pub fn run_assembly(s: &str) -> Result<(), String> {
-    let (map, machine_code) = assemble(s)?;
-    let mut cpu = Cpu::new();
-    cpu.parse_machine_code(map, &machine_code);
+    let (_, _, machine_code) = assemble(s)?;
+    let mut cpu = cpu::Cpu::new();
+    cpu.parse_machine_code(&machine_code);
     cpu.run()
 }

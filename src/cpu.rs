@@ -1,7 +1,6 @@
 use rand::Rng;
 use std::io::Read;
 use std::io::Write;
-use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
@@ -102,15 +101,15 @@ impl IndexMut<Address> for Memory {
 
 #[derive(Clone, Default)]
 pub struct Cu {
-    ip: Address,
-    ir: Instruction,
+    pub ip: Address,
+    pub ir: Instruction,
 }
 
 #[derive(Clone)]
 pub struct Alu {
-    acc: Byte,
-    sp: Address,
-    bp: Address,
+    pub acc: Byte,
+    pub sp: Address,
+    pub bp: Address,
 }
 
 impl Alu {
@@ -125,24 +124,17 @@ impl Alu {
 
 #[derive(Clone)]
 pub struct Cpu {
-    cu: Cu,
-    alu: Alu,
-    memory: Memory,
-    symbols: HashMap<String, String>
+    pub cu: Cu,
+    pub alu: Alu,
+    pub memory: Memory,
 }
 
 impl Default for Cpu {
     fn default() -> Self {
-        let mut symbols = HashMap::default();
-        symbols.insert("900".to_owned(), "printInteger".to_owned());
-        symbols.insert("925".to_owned(), "printString".to_owned());
-        symbols.insert("950".to_owned(), "inputInteger".to_owned());
-        symbols.insert("975".to_owned(), "inputString".to_owned());
         Self {
             cu: Cu::default(),
             alu: Alu::new(),
             memory: Memory::new(),
-            symbols,
         }
     }
 }
@@ -409,16 +401,13 @@ impl Cpu {
     /// # Panics
     ///
     /// Panics if the machine code is malformed
-    pub fn parse_machine_code(&mut self, map: HashMap<String, String>, s: &str) {
+    pub fn parse_machine_code(&mut self, s: &str) {
         for line in s.lines() {
             let words: Vec<_> = line.split_whitespace().collect();
             if words.len() >= 2 {
                 self.memory[Address::new(words[0].parse().unwrap())] =
                     Byte::new(words[1].parse().unwrap());
             }
-        }
-        for (address, label) in map {
-            self.symbols.insert(address, label);
         }
     }
 }
