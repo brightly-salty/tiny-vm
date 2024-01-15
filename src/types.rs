@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default, Hash)]
 pub struct Address(pub u16); //0-999 (3 decimal digits)
 
@@ -11,6 +13,12 @@ impl Address {
     #[must_use]
     pub fn into_byte(self) -> Byte {
         Byte(i32::from(self.0))
+    }
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:0>3}", self.0.to_string())
     }
 }
 
@@ -54,6 +62,12 @@ impl Byte {
     pub fn new(b: i32) -> Self {
         debug_assert!(b < 100_000 && b > -100_000);
         Self(b)
+    }
+}
+
+impl fmt::Display for Byte {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:0>5}", self.0.to_string())
     }
 }
 

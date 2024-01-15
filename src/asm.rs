@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
-use crate::types::Address;
+use crate::types::{Byte, Address};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct AsmLabel(String);
@@ -47,7 +47,7 @@ enum AsmOc {
     Jne(AsmOperand),
     Pusha(AsmOperand),
     Dc(String),
-    Db(i32),
+    Db(Byte),
     Ds(u32),
     CallPrintInteger,
     CallPrintString,
@@ -93,7 +93,7 @@ impl AsmLabelMap {
     }
 
     pub fn insert(&mut self, label: AsmLabel, address: Address) {
-        self.inner.insert(label, pad_num(address));
+        self.inner.insert(label, address.to_string());
     }
 }
 
@@ -190,7 +190,7 @@ fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, Stri
                 "dc" => {
                     AsmOc::Dc(operand_str[1..operand_str.len().saturating_sub(1)].replace("\\n", "\n"))
                 }
-                "db" => AsmOc::Db(operand_str.parse().unwrap()),
+                "db" => AsmOc::Db(Byte::new(operand_str.parse().unwrap())),
                 "ds" => AsmOc::Ds(operand_str.parse().unwrap()),
                 s => return Err(format!("unrecognized operand at line {ln}: {s}")),
             },
@@ -235,24 +235,6 @@ fn first_pass(input: &[AsmInstruction]) -> (Vec<AsmOpcode>, AsmLabelMap, SourceM
     (instructions, label_map, source_map)
 }
 
-fn pad_num(n: Address) -> String {
-    let mut s = n.0.to_string();
-    debug_assert!(s.len() <= 3);
-    while s.len() < 3 {
-        s = format!("0{s}");
-    }
-    s
-}
-
-fn pad_five(n: i32) -> String {
-    let mut s = n.to_string();
-    debug_assert!(s.len() <= 5);
-    while s.len() < 5 {
-        s = format!("0{s}");
-    }
-    s
-}
-
 fn create_machine_code(map: &AsmLabelMap, opcodes: Vec<AsmOpcode>) -> Result<String, String> {
     let mut s = String::new();
     let mut address = Address(0);
@@ -269,24 +251,24 @@ fn opcode_to_machine(
     opcode: AsmOpcode,
 ) -> Result<Address, String> {
     use AsmOperand::{Direct, Immediate};
-    write!(s, "{} ", pad_num(a)).unwrap();
+    write!(s, "{a} ").unwrap();
     let mut new_address = Address(a.0.saturating_add(1));
     match opcode.oc {
         AsmOc::Stop => writeln!(s, "00000").unwrap(),
         AsmOc::Ld(Direct(label)) => writeln!(s, "01{}", map.get(opcode.ln, &label)?).unwrap(),
-        AsmOc::Ld(Immediate(n)) => writeln!(s, "91{}", pad_num(n)).unwrap(),
+        AsmOc::Ld(Immediate(n)) => writeln!(s, "91{n}").unwrap(),
         AsmOc::Ldi(Direct(label)) => writeln!(s, "02{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::Lda(Direct(label)) => writeln!(s, "03{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::St(Direct(label)) => writeln!(s, "04{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::Sti(Direct(label)) => writeln!(s, "05{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::Add(Direct(label)) => writeln!(s, "06{}", map.get(opcode.ln, &label)?).unwrap(),
-        AsmOc::Add(Immediate(n)) => writeln!(s, "96{}", pad_num(n)).unwrap(),
+        AsmOc::Add(Immediate(n)) => writeln!(s, "96{n}").unwrap(),
         AsmOc::Sub(Direct(label)) => writeln!(s, "07{}", map.get(opcode.ln, &label)?).unwrap(),
-        AsmOc::Sub(Immediate(n)) => writeln!(s, "97{}", pad_num(n)).unwrap(),
+        AsmOc::Sub(Immediate(n)) => writeln!(s, "97{n}").unwrap(),
         AsmOc::Mul(Direct(label)) => writeln!(s, "08{}", map.get(opcode.ln, &label)?).unwrap(),
-        AsmOc::Mul(Immediate(n)) => writeln!(s, "98{}", pad_num(n)).unwrap(),
+        AsmOc::Mul(Immediate(n)) => writeln!(s, "98{n}").unwrap(),
         AsmOc::Div(Direct(label)) => writeln!(s, "09{}", map.get(opcode.ln, &label)?).unwrap(),
-        AsmOc::Div(Immediate(n)) => writeln!(s, "99{}", pad_num(n)).unwrap(),
+        AsmOc::Div(Immediate(n)) => writeln!(s, "99{n}").unwrap(),
         AsmOc::In => writeln!(s, "10000").unwrap(),
         AsmOc::Out => writeln!(s, "11000").unwrap(),
         AsmOc::Jmp(Direct(label)) => writeln!(s, "12{}", map.get(opcode.ln, &label)?).unwrap(),
@@ -297,7 +279,7 @@ fn opcode_to_machine(
         AsmOc::Ret => writeln!(s, "17000").unwrap(),
         AsmOc::Push_ => writeln!(s, "18000").unwrap(),
         AsmOc::Pop_ => writeln!(s, "19000").unwrap(),
-        AsmOc::Ldparam(Immediate(n)) => writeln!(s, "20{}", pad_num(n)).unwrap(),
+        AsmOc::Ldparam(Immediate(n)) => writeln!(s, "20{n}").unwrap(),
         AsmOc::Jge(Direct(label)) => writeln!(s, "21{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::Jle(Direct(label)) => writeln!(s, "22{}", map.get(opcode.ln, &label)?).unwrap(),
         AsmOc::Jne(Direct(label)) => writeln!(s, "23{}", map.get(opcode.ln, &label)?).unwrap(),
@@ -308,25 +290,25 @@ fn opcode_to_machine(
         AsmOc::CallPrintString => writeln!(s, "16925").unwrap(),
         AsmOc::CallInputInteger => writeln!(s, "16950").unwrap(),
         AsmOc::CallInputString => writeln!(s, "16975").unwrap(),
-        AsmOc::Db(n) => writeln!(s, "{}", pad_five(n)).unwrap(),
+        AsmOc::Db(n) => writeln!(s, "{n}").unwrap(),
         AsmOc::Ds(n) => {
             writeln!(s, "00000").unwrap();
             let mut x = Address(a.0.saturating_add(1));
             for _ in 1..n {
-                writeln!(s, "{} 00000", pad_num(x)).unwrap();
+                writeln!(s, "{x} 00000").unwrap();
                 x = Address(x.0.saturating_add(1));
             }
             new_address = x;
         }
         AsmOc::Dc(string) => {
             let cs: Vec<_> = string.chars().collect();
-            writeln!(s, "{}", pad_five(cs[0] as i32)).unwrap();
+            writeln!(s, "{}", Byte::new(cs[0] as i32)).unwrap();
             let mut x = a;
             for c in &cs[1..] {
-                writeln!(s, "{} {}", pad_num(x), pad_five(*c as i32)).unwrap();
+                writeln!(s, "{x} {}", Byte::new(*c as i32)).unwrap();
                 x = Address(x.0.saturating_add(1));
             }
-            writeln!(s, "{} 00000", pad_num(x)).unwrap();
+            writeln!(s, "{x} 00000").unwrap();
             new_address = Address(x.0.saturating_add(1));
         }
         x => {
