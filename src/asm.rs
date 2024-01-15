@@ -1,50 +1,51 @@
 use std::collections::HashMap;
 use std::fmt::Write;
+use crate::types::Address;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct Label(String);
+struct AsmLabel(String);
 
 #[derive(Clone, Debug)]
-enum Operand {
-    Direct(Label),  // must match operand
-    Immediate(u16), // 0-999
+enum AsmOperand {
+    Direct(AsmLabel),  // must match operand
+    Immediate(Address), // 0-999
 }
 
 #[derive(Debug, Clone)]
-struct Opcode {
+struct AsmOpcode {
     ln: usize,
-    oc: Oc,
+    oc: AsmOc,
 }
 
 #[derive(Debug, Clone)]
-enum Oc {
+enum AsmOc {
     Stop,
-    Ld(Operand),
-    Ldi(Operand),
-    Lda(Operand),
-    St(Operand),
-    Sti(Operand),
-    Add(Operand),
-    Sub(Operand),
-    Mul(Operand),
-    Div(Operand),
+    Ld(AsmOperand),
+    Ldi(AsmOperand),
+    Lda(AsmOperand),
+    St(AsmOperand),
+    Sti(AsmOperand),
+    Add(AsmOperand),
+    Sub(AsmOperand),
+    Mul(AsmOperand),
+    Div(AsmOperand),
     In,
     Out,
-    Jmp(Operand),
-    Jg(Operand),
-    Jl(Operand),
-    Je(Operand),
-    Call(Operand),
+    Jmp(AsmOperand),
+    Jg(AsmOperand),
+    Jl(AsmOperand),
+    Je(AsmOperand),
+    Call(AsmOperand),
     Ret,
     Push_,
-    Push(Operand),
+    Push(AsmOperand),
     Pop_,
-    Pop(Operand),
-    Ldparam(Operand),
-    Jge(Operand),
-    Jle(Operand),
-    Jne(Operand),
-    Pusha(Operand),
+    Pop(AsmOperand),
+    Ldparam(AsmOperand),
+    Jge(AsmOperand),
+    Jle(AsmOperand),
+    Jne(AsmOperand),
+    Pusha(AsmOperand),
     Dc(String),
     Db(i32),
     Ds(u32),
@@ -54,16 +55,16 @@ enum Oc {
     CallInputString,
 }
 
-struct Instruction {
-    label: Option<Label>,
-    opcode: Option<Opcode>,
+struct AsmInstruction {
+    label: Option<AsmLabel>,
+    opcode: Option<AsmOpcode>,
 }
 
-impl Opcode {
+impl AsmOpcode {
     pub fn len(&self) -> u16 {
         match &self.oc {
-            Oc::Dc(s) => u16::try_from(s.chars().count()).unwrap().saturating_add(1),
-            Oc::Ds(n) => u16::try_from(*n).unwrap(),
+            AsmOc::Dc(s) => u16::try_from(s.chars().count()).unwrap().saturating_add(1),
+            AsmOc::Ds(n) => u16::try_from(*n).unwrap(),
             _ => 1,
         }
     }
@@ -71,32 +72,32 @@ impl Opcode {
 
 type SymbolTable = HashMap<String, String>;
 
-type SourceMap = HashMap<u16, usize>;
+type SourceMap = HashMap<Address, usize>;
 
 #[derive(Debug)]
-struct LabelMap {
-    inner: HashMap<Label, String>,
+struct AsmLabelMap {
+    inner: HashMap<AsmLabel, String>,
 }
 
-impl LabelMap {
+impl AsmLabelMap {
     pub fn new() -> Self {
         Self {
             inner: HashMap::new(),
         }
     }
 
-    pub fn get(&self, ln: usize, label: &Label) -> Result<&String, String> {
+    pub fn get(&self, ln: usize, label: &AsmLabel) -> Result<&String, String> {
         self.inner
             .get(label)
             .ok_or_else(|| format!("unknown operand at line {ln}: '{}'", label.0))
     }
 
-    pub fn insert(&mut self, label: Label, address: u16) {
+    pub fn insert(&mut self, label: AsmLabel, address: Address) {
         self.inner.insert(label, pad_num(address));
     }
 }
 
-fn create_symbol_table(map: LabelMap) -> SymbolTable {
+fn create_symbol_table(map: AsmLabelMap) -> SymbolTable {
     let mut symbols = HashMap::new();
 
     symbols.insert("900".to_owned(), "printInteger".to_owned());
@@ -124,88 +125,88 @@ pub fn assemble(asm: &str) -> Result<(SymbolTable, SourceMap, String), String> {
     Ok((symbol_table, source_map, machine_code))
 }
 
-fn line_to_instruction(ln: usize, mut line: &str) -> Result<Instruction, String> {
-    use Operand::{Direct, Immediate};
+fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, String> {
+    use AsmOperand::{Direct, Immediate};
     line = line.split(';').next().unwrap();
     let split_by_colon: Vec<_> = line.split(':').collect();
     let mut label = None;
     let mut opcode = None;
     let rest = if split_by_colon.len() >= 2 {
-        label = Some(Label(split_by_colon[0].trim().to_ascii_lowercase()));
+        label = Some(AsmLabel(split_by_colon[0].trim().to_ascii_lowercase()));
         split_by_colon[1..].join(":")
     } else {
         split_by_colon[0].to_string()
     };
     let opcode_parts: Vec<&str> = rest.split_whitespace().collect();
     if opcode_parts.len() == 1 {
-        opcode = Some(Opcode {
+        opcode = Some(AsmOpcode {
             ln,
             oc: match opcode_parts[0].to_ascii_lowercase().as_str() {
-                "stop" => Oc::Stop,
-                "in" => Oc::In,
-                "out" => Oc::Out,
-                "ret" => Oc::Ret,
-                "push" => Oc::Push_,
-                "pop" => Oc::Pop_,
+                "stop" => AsmOc::Stop,
+                "in" => AsmOc::In,
+                "out" => AsmOc::Out,
+                "ret" => AsmOc::Ret,
+                "push" => AsmOc::Push_,
+                "pop" => AsmOc::Pop_,
                 s => return Err(format!("unrecognized opcode at line {ln}: {s}")),
             },
         });
     } else if opcode_parts.len() >= 2 {
         let operand_str = opcode_parts[1..].join(" ");
-        let operand = operand_str.parse::<u16>().map_or_else(
-            |_| Direct(Label(operand_str.to_ascii_lowercase())),
+        let operand = operand_str.parse::<u16>().map(Address).map_or_else(
+            |_| Direct(AsmLabel(operand_str.to_ascii_lowercase())),
             Immediate,
         );
-        opcode = Some(Opcode {
+        opcode = Some(AsmOpcode {
             ln,
             oc: match opcode_parts[0].to_ascii_lowercase().as_str() {
-                "ld" => Oc::Ld(operand),
-                "ldi" => Oc::Ldi(operand),
-                "lda" => Oc::Lda(operand),
-                "st" => Oc::St(operand),
-                "sti" => Oc::Sti(operand),
-                "add" => Oc::Add(operand),
-                "sub" => Oc::Sub(operand),
-                "mul" => Oc::Mul(operand),
-                "div" => Oc::Div(operand),
-                "jmp" => Oc::Jmp(operand),
-                "jg" => Oc::Jg(operand),
-                "jl" => Oc::Jl(operand),
-                "je" => Oc::Je(operand),
+                "ld" => AsmOc::Ld(operand),
+                "ldi" => AsmOc::Ldi(operand),
+                "lda" => AsmOc::Lda(operand),
+                "st" => AsmOc::St(operand),
+                "sti" => AsmOc::Sti(operand),
+                "add" => AsmOc::Add(operand),
+                "sub" => AsmOc::Sub(operand),
+                "mul" => AsmOc::Mul(operand),
+                "div" => AsmOc::Div(operand),
+                "jmp" => AsmOc::Jmp(operand),
+                "jg" => AsmOc::Jg(operand),
+                "jl" => AsmOc::Jl(operand),
+                "je" => AsmOc::Je(operand),
                 "call" => match operand_str.to_ascii_lowercase().as_str() {
-                    "printinteger" => Oc::CallPrintInteger,
-                    "printstring" => Oc::CallPrintString,
-                    "inputinteger" => Oc::CallInputInteger,
-                    "inputstring" => Oc::CallInputString,
-                    _ => Oc::Call(operand),
+                    "printinteger" => AsmOc::CallPrintInteger,
+                    "printstring" => AsmOc::CallPrintString,
+                    "inputinteger" => AsmOc::CallInputInteger,
+                    "inputstring" => AsmOc::CallInputString,
+                    _ => AsmOc::Call(operand),
                 },
-                "ldparam" => Oc::Ldparam(operand),
-                "jge" => Oc::Jge(operand),
-                "jle" => Oc::Jle(operand),
-                "jne" => Oc::Jne(operand),
-                "push" => Oc::Push(operand),
-                "pop" => Oc::Pop(operand),
-                "pusha" => Oc::Pusha(operand),
+                "ldparam" => AsmOc::Ldparam(operand),
+                "jge" => AsmOc::Jge(operand),
+                "jle" => AsmOc::Jle(operand),
+                "jne" => AsmOc::Jne(operand),
+                "push" => AsmOc::Push(operand),
+                "pop" => AsmOc::Pop(operand),
+                "pusha" => AsmOc::Pusha(operand),
                 "dc" => {
-                    Oc::Dc(operand_str[1..operand_str.len().saturating_sub(1)].replace("\\n", "\n"))
+                    AsmOc::Dc(operand_str[1..operand_str.len().saturating_sub(1)].replace("\\n", "\n"))
                 }
-                "db" => Oc::Db(operand_str.parse().unwrap()),
-                "ds" => Oc::Ds(operand_str.parse().unwrap()),
+                "db" => AsmOc::Db(operand_str.parse().unwrap()),
+                "ds" => AsmOc::Ds(operand_str.parse().unwrap()),
                 s => return Err(format!("unrecognized operand at line {ln}: {s}")),
             },
         });
     }
 
-    Ok(Instruction { label, opcode })
+    Ok(AsmInstruction { label, opcode })
 }
 
-fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap, SourceMap) {
+fn first_pass(input: &[AsmInstruction]) -> (Vec<AsmOpcode>, AsmLabelMap, SourceMap) {
     let mut instructions = vec![];
     let mut i = 0;
     let mut stored_label = None;
-    let mut label_map = LabelMap::new();
+    let mut label_map = AsmLabelMap::new();
     let mut source_map = HashMap::new();
-    let mut address = 0;
+    let mut address = Address(0);
     while i < input.len() {
         let cur = &input[i];
         match (&cur.label, &cur.opcode) {
@@ -217,7 +218,7 @@ fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap, SourceMap) {
                 label_map.insert(label.clone(), address);
                 source_map.insert(address, oc.ln);
                 instructions.push(oc.clone());
-                address = address.saturating_add(oc.len());
+                address = Address(address.0.saturating_add(oc.len()));
             }
             (None, Some(oc)) => {
                 let label = stored_label.take();
@@ -226,7 +227,7 @@ fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap, SourceMap) {
                 if let Some(l) = label {
                     label_map.insert(l, address);
                 }
-                address = address.saturating_add(oc.len());
+                address = Address(address.0.saturating_add(oc.len()));
             }
         }
         i = i.saturating_add(1);
@@ -234,8 +235,8 @@ fn first_pass(input: &[Instruction]) -> (Vec<Opcode>, LabelMap, SourceMap) {
     (instructions, label_map, source_map)
 }
 
-fn pad_num(n: u16) -> String {
-    let mut s = n.to_string();
+fn pad_num(n: Address) -> String {
+    let mut s = n.0.to_string();
     debug_assert!(s.len() <= 3);
     while s.len() < 3 {
         s = format!("0{s}");
@@ -252,82 +253,81 @@ fn pad_five(n: i32) -> String {
     s
 }
 
-fn create_machine_code(map: &LabelMap, opcodes: Vec<Opcode>) -> Result<String, String> {
+fn create_machine_code(map: &AsmLabelMap, opcodes: Vec<AsmOpcode>) -> Result<String, String> {
     let mut s = String::new();
-    let mut address = 0;
+    let mut address = Address(0);
     for opcode in opcodes {
-        let new_address = opcode_to_machine(&mut s, map, address, opcode)?;
-        address = new_address;
+        address = opcode_to_machine(&mut s, map, address, opcode)?;
     }
     Ok(s)
 }
 
 fn opcode_to_machine(
     s: &mut String,
-    map: &LabelMap,
-    a: u16,
-    opcode: Opcode,
-) -> Result<u16, String> {
-    use Operand::{Direct, Immediate};
+    map: &AsmLabelMap,
+    a: Address,
+    opcode: AsmOpcode,
+) -> Result<Address, String> {
+    use AsmOperand::{Direct, Immediate};
     write!(s, "{} ", pad_num(a)).unwrap();
-    let mut new_address = a.saturating_add(1);
+    let mut new_address = Address(a.0.saturating_add(1));
     match opcode.oc {
-        Oc::Stop => writeln!(s, "00000").unwrap(),
-        Oc::Ld(Direct(label)) => writeln!(s, "01{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Ld(Immediate(n)) => writeln!(s, "91{}", pad_num(n)).unwrap(),
-        Oc::Ldi(Direct(label)) => writeln!(s, "02{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Lda(Direct(label)) => writeln!(s, "03{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::St(Direct(label)) => writeln!(s, "04{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Sti(Direct(label)) => writeln!(s, "05{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Add(Direct(label)) => writeln!(s, "06{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Add(Immediate(n)) => writeln!(s, "96{}", pad_num(n)).unwrap(),
-        Oc::Sub(Direct(label)) => writeln!(s, "07{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Sub(Immediate(n)) => writeln!(s, "97{}", pad_num(n)).unwrap(),
-        Oc::Mul(Direct(label)) => writeln!(s, "08{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Mul(Immediate(n)) => writeln!(s, "98{}", pad_num(n)).unwrap(),
-        Oc::Div(Direct(label)) => writeln!(s, "09{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Div(Immediate(n)) => writeln!(s, "99{}", pad_num(n)).unwrap(),
-        Oc::In => writeln!(s, "10000").unwrap(),
-        Oc::Out => writeln!(s, "11000").unwrap(),
-        Oc::Jmp(Direct(label)) => writeln!(s, "12{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Jg(Direct(label)) => writeln!(s, "13{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Jl(Direct(label)) => writeln!(s, "14{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Je(Direct(label)) => writeln!(s, "15{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Call(Direct(label)) => writeln!(s, "16{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Ret => writeln!(s, "17000").unwrap(),
-        Oc::Push_ => writeln!(s, "18000").unwrap(),
-        Oc::Pop_ => writeln!(s, "19000").unwrap(),
-        Oc::Ldparam(Immediate(n)) => writeln!(s, "20{}", pad_num(n)).unwrap(),
-        Oc::Jge(Direct(label)) => writeln!(s, "21{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Jle(Direct(label)) => writeln!(s, "22{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Jne(Direct(label)) => writeln!(s, "23{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Push(Direct(label)) => writeln!(s, "24{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Pop(Direct(label)) => writeln!(s, "25{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::Pusha(Direct(label)) => writeln!(s, "26{}", map.get(opcode.ln, &label)?).unwrap(),
-        Oc::CallPrintInteger => writeln!(s, "16900").unwrap(),
-        Oc::CallPrintString => writeln!(s, "16925").unwrap(),
-        Oc::CallInputInteger => writeln!(s, "16950").unwrap(),
-        Oc::CallInputString => writeln!(s, "16975").unwrap(),
-        Oc::Db(n) => writeln!(s, "{}", pad_five(n)).unwrap(),
-        Oc::Ds(n) => {
+        AsmOc::Stop => writeln!(s, "00000").unwrap(),
+        AsmOc::Ld(Direct(label)) => writeln!(s, "01{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Ld(Immediate(n)) => writeln!(s, "91{}", pad_num(n)).unwrap(),
+        AsmOc::Ldi(Direct(label)) => writeln!(s, "02{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Lda(Direct(label)) => writeln!(s, "03{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::St(Direct(label)) => writeln!(s, "04{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Sti(Direct(label)) => writeln!(s, "05{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Add(Direct(label)) => writeln!(s, "06{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Add(Immediate(n)) => writeln!(s, "96{}", pad_num(n)).unwrap(),
+        AsmOc::Sub(Direct(label)) => writeln!(s, "07{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Sub(Immediate(n)) => writeln!(s, "97{}", pad_num(n)).unwrap(),
+        AsmOc::Mul(Direct(label)) => writeln!(s, "08{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Mul(Immediate(n)) => writeln!(s, "98{}", pad_num(n)).unwrap(),
+        AsmOc::Div(Direct(label)) => writeln!(s, "09{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Div(Immediate(n)) => writeln!(s, "99{}", pad_num(n)).unwrap(),
+        AsmOc::In => writeln!(s, "10000").unwrap(),
+        AsmOc::Out => writeln!(s, "11000").unwrap(),
+        AsmOc::Jmp(Direct(label)) => writeln!(s, "12{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Jg(Direct(label)) => writeln!(s, "13{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Jl(Direct(label)) => writeln!(s, "14{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Je(Direct(label)) => writeln!(s, "15{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Call(Direct(label)) => writeln!(s, "16{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Ret => writeln!(s, "17000").unwrap(),
+        AsmOc::Push_ => writeln!(s, "18000").unwrap(),
+        AsmOc::Pop_ => writeln!(s, "19000").unwrap(),
+        AsmOc::Ldparam(Immediate(n)) => writeln!(s, "20{}", pad_num(n)).unwrap(),
+        AsmOc::Jge(Direct(label)) => writeln!(s, "21{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Jle(Direct(label)) => writeln!(s, "22{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Jne(Direct(label)) => writeln!(s, "23{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Push(Direct(label)) => writeln!(s, "24{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Pop(Direct(label)) => writeln!(s, "25{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::Pusha(Direct(label)) => writeln!(s, "26{}", map.get(opcode.ln, &label)?).unwrap(),
+        AsmOc::CallPrintInteger => writeln!(s, "16900").unwrap(),
+        AsmOc::CallPrintString => writeln!(s, "16925").unwrap(),
+        AsmOc::CallInputInteger => writeln!(s, "16950").unwrap(),
+        AsmOc::CallInputString => writeln!(s, "16975").unwrap(),
+        AsmOc::Db(n) => writeln!(s, "{}", pad_five(n)).unwrap(),
+        AsmOc::Ds(n) => {
             writeln!(s, "00000").unwrap();
-            let mut x = a.saturating_add(1);
+            let mut x = Address(a.0.saturating_add(1));
             for _ in 1..n {
                 writeln!(s, "{} 00000", pad_num(x)).unwrap();
-                x = x.saturating_add(1);
+                x = Address(x.0.saturating_add(1));
             }
             new_address = x;
         }
-        Oc::Dc(string) => {
+        AsmOc::Dc(string) => {
             let cs: Vec<_> = string.chars().collect();
             writeln!(s, "{}", pad_five(cs[0] as i32)).unwrap();
             let mut x = a;
             for c in &cs[1..] {
                 writeln!(s, "{} {}", pad_num(x), pad_five(*c as i32)).unwrap();
-                x = x.saturating_add(1);
+                x = Address(x.0.saturating_add(1));
             }
             writeln!(s, "{} 00000", pad_num(x)).unwrap();
-            new_address = x.saturating_add(1);
+            new_address = Address(x.0.saturating_add(1));
         }
         x => {
             return Err(format!(

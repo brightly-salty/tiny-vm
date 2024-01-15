@@ -7,6 +7,7 @@ use egui_extras::{Column, TableBuilder};
 use std::collections::HashMap;
 use tiny_vm::assemble;
 use tiny_vm::cpu::Cpu;
+use tiny_vm::types::Address;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -156,7 +157,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 struct TIDE {
     source: String,
     symbols: HashMap<String, String>, // Symbols
-    source_map: HashMap<u16, usize>,
+    source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
     cpu: Cpu,
 

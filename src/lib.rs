@@ -14,6 +14,7 @@
     clippy::redundant_type_annotations,
     clippy::unwrap_in_result
 )]
+pub mod types;
 mod asm;
 pub mod cpu;
 pub use asm::assemble;
