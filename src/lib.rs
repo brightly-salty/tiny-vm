@@ -14,9 +14,9 @@
     clippy::redundant_type_annotations,
     clippy::unwrap_in_result
 )]
-pub mod types;
 mod asm;
 pub mod cpu;
+pub mod types;
 pub use asm::assemble;
 
 /// # Errors
@@ -25,6 +25,6 @@ pub use asm::assemble;
 pub fn run_assembly(s: &str) -> Result<(), String> {
     let (_, _, machine_code) = assemble(s)?;
     let mut cpu = cpu::Cpu::new();
-    cpu.set_memory(machine_code);
+    cpu.set_memory(&machine_code);
     cpu.run()
 }

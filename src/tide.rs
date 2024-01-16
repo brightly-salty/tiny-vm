@@ -169,7 +169,7 @@ impl TIDE {
         let result = assemble(&self.source).unwrap();
         self.symbols = result.0;
         self.source_map = result.1;
-        self.cpu.set_memory(result.2);
+        self.cpu.set_memory(&result.2);
     }
 
     fn run(&mut self) {
@@ -186,7 +186,9 @@ impl TIDE {
     }
 
     fn step(&mut self) {
-        self.cpu.step().unwrap();
+        self.cpu
+            .step(std::io::stdin().lock(), std::io::stdout().lock())
+            .unwrap();
     }
 
     fn step_over(&mut self) {

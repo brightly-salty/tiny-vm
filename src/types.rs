@@ -79,4 +79,3 @@ pub struct Instruction {
     pub opcode: Opcode,
     pub operand: Address,
 }
-

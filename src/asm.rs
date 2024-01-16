@@ -1,12 +1,12 @@
+use crate::types::{Address, Byte};
 use std::collections::HashMap;
-use crate::types::{Byte, Address};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct AsmLabel(String);
 
 #[derive(Clone, Debug)]
 enum AsmOperand {
-    Direct(AsmLabel),  // must match operand
+    Direct(AsmLabel),   // must match operand
     Immediate(Address), // 0-999
 }
 
@@ -187,9 +187,9 @@ fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, Stri
                 "push" => AsmOc::Push(operand),
                 "pop" => AsmOc::Pop(operand),
                 "pusha" => AsmOc::Pusha(operand),
-                "dc" => {
-                    AsmOc::Dc(operand_str[1..operand_str.len().saturating_sub(1)].replace("\\n", "\n"))
-                }
+                "dc" => AsmOc::Dc(
+                    operand_str[1..operand_str.len().saturating_sub(1)].replace("\\n", "\n"),
+                ),
                 "db" => AsmOc::Db(Byte::new(operand_str.parse().unwrap())),
                 "ds" => AsmOc::Ds(operand_str.parse().unwrap()),
                 s => return Err(format!("unrecognized operand at line {ln}: {s}")),
@@ -272,7 +272,7 @@ fn opcode_to_machine(
         AsmOc::In => add_instruction(v, 10, Address(0)),
         AsmOc::Out => add_instruction(v, 11, Address(0)),
         AsmOc::Jmp(Direct(label)) => add_instruction(v, 12, map.get(opcode.ln, &label)?),
-        AsmOc::Jg(Direct(label)) => add_instruction(v,13, map.get(opcode.ln, &label)?),
+        AsmOc::Jg(Direct(label)) => add_instruction(v, 13, map.get(opcode.ln, &label)?),
         AsmOc::Jl(Direct(label)) => add_instruction(v, 14, map.get(opcode.ln, &label)?),
         AsmOc::Je(Direct(label)) => add_instruction(v, 15, map.get(opcode.ln, &label)?),
         AsmOc::Call(Direct(label)) => add_instruction(v, 16, map.get(opcode.ln, &label)?),
