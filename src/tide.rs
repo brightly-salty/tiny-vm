@@ -65,19 +65,13 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         });
                     })
                     .body(|mut body| {
-                        body.rows(20.0, num_rows, |mut row| {
+                        body.rows(15.0, num_rows, |mut row| {
                             let mut source_lines = self.tide.source.split('\n');
                             let index = row.index();
                             let source_line = &source_lines.nth(index);
 
                             row.col(|ui| {
-                                let result = ui.selectable_label(false, format!("{:03}", index));
-
-                                if result.clicked() {
-                                    todo!();
-                                }
-
-                                result.on_hover_text("Click to go to address in memory");
+                                ui.label(format!("{:03}", index));
                             });
 
                             row.col(|ui| {
@@ -87,14 +81,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             });
 
                             row.col(|ui| {
-                                let result =
-                                    ui.selectable_label(false, source_line.unwrap_or("<empty>"));
-
-                                if result.clicked() {
-                                    todo!();
-                                }
-
-                                result.on_hover_text("Click to go to source line");
+                                ui.label(source_line.unwrap_or("<empty>"));
                             });
                         });
                     })
