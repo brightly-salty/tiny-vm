@@ -156,7 +156,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 #[derive(Clone)]
 struct TIDE {
     source: String,
-    symbols: HashMap<String, String>, // Symbols
+    symbols: HashMap<Address, String>, // Symbols
     source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
     cpu: Cpu,
@@ -169,7 +169,7 @@ impl TIDE {
         let result = assemble(&self.source).unwrap();
         self.symbols = result.0;
         self.source_map = result.1;
-        self.cpu.parse_machine_code(&result.2);
+        self.cpu.set_memory(result.2);
     }
 
     fn run(&mut self) {

@@ -334,14 +334,9 @@ impl Cpu {
     /// # Panics
     ///
     /// Panics if the machine code is malformed
-    pub fn parse_machine_code(&mut self, s: &str) {
-        println!("{s}");
-        for line in s.lines() {
-            let words: Vec<_> = line.split_whitespace().collect();
-            if words.len() >= 2 {
-                self.memory[Address::new(words[0].parse().unwrap())] =
-                    Byte::new(words[1].parse().unwrap());
-            }
+    pub fn set_memory(&mut self, v: Vec<Byte>) {
+        for (a, byte) in v.iter().enumerate() {
+            self.memory[Address(a as u16)] = *byte;
         }
     }
 }

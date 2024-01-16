@@ -25,6 +25,6 @@ pub use asm::assemble;
 pub fn run_assembly(s: &str) -> Result<(), String> {
     let (_, _, machine_code) = assemble(s)?;
     let mut cpu = cpu::Cpu::new();
-    cpu.parse_machine_code(&machine_code);
+    cpu.set_memory(machine_code);
     cpu.run()
 }
