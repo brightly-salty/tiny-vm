@@ -125,23 +125,23 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             "Registers" => {
                 egui::Grid::new(1).show(ui, |ui| {
                     ui.label("Accumulator");
-                    ui.label("XXXXX");
+                    ui.label(format!("{:05}", self.tide.cpu.alu.acc));
                     ui.end_row();
 
                     ui.label("Instruction Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.cu.ip));
                     ui.end_row();
 
                     ui.label("Stack Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.alu.sp));
                     ui.end_row();
 
                     ui.label("Base Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.alu.bp));
                     ui.end_row();
 
                     ui.label("Instruction Register");
-                    ui.label("XXXXX");
+                    //ui.label(format!("{:05}", self.tide.cpu.cu.ir));
                     ui.end_row();
                 });
             }
