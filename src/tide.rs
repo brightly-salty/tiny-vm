@@ -75,9 +75,10 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             });
 
                             row.col(|ui| {
-                                todo!();
-                                // TODO
-                                //let _ = ui.selectable_label(false, self.tide.cpu.memory);
+                                ui.label(format!(
+                                    "{:05}",
+                                    self.tide.cpu.memory[Address::new(index as u16)].0
+                                ));
                             });
 
                             row.col(|ui| {
@@ -90,7 +91,29 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 ui.label("exec");
             }
             "Memory" => {
-                ui.label("rember");
+                ui.with_layout(
+                    egui::Layout::top_down(egui::Align::Min)
+                        .with_main_wrap(true)
+                        .with_cross_justify(false),
+                    |ui| {
+                        for (addr, value, chr) in (0..900).map(|a| {
+                            (
+                                a,
+                                self.tide.cpu.memory[Address(a)],
+                                self.tide.cpu.memory[Address(a)]
+                                    .read_as_char()
+                                    .unwrap_or(' '),
+                            )
+                        }) {
+                            let _ = ui.monospace(format!(
+                                "{:03}  {:05} {}  ",
+                                addr,
+                                value,
+                                if chr.is_ascii() { chr } else { ' ' }
+                            ));
+                        }
+                    },
+                );
             }
 
             "Assembly Errors" => {
