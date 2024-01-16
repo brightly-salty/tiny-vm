@@ -37,7 +37,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             "Source" => {
                 ui.add_sized(
                     ui.available_size(),
-                    egui::TextEdit::multiline(&mut self.tide.source),
+                    egui::TextEdit::multiline(&mut self.tide.source).code_editor(),
                 );
             }
             "Listing" => {
@@ -65,36 +65,24 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         });
                     })
                     .body(|mut body| {
-                        body.rows(20.0, num_rows, |mut row| {
+                        body.rows(15.0, num_rows, |mut row| {
                             let mut source_lines = self.tide.source.split('\n');
                             let index = row.index();
                             let source_line = &source_lines.nth(index);
 
                             row.col(|ui| {
-                                let result = ui.selectable_label(false, format!("{:03}", index));
-
-                                if result.clicked() {
-                                    todo!();
-                                }
-
-                                result.on_hover_text("Click to go to address in memory");
+                                ui.label(format!("{:03}", index));
                             });
 
                             row.col(|ui| {
-                                todo!();
-                                // TODO
-                                //let _ = ui.selectable_label(false, self.tide.cpu.memory);
+                                ui.label(format!(
+                                    "{:05}",
+                                    self.tide.cpu.memory[Address::new(index as u16)].0
+                                ));
                             });
 
                             row.col(|ui| {
-                                let result =
-                                    ui.selectable_label(false, source_line.unwrap_or("<empty>"));
-
-                                if result.clicked() {
-                                    todo!();
-                                }
-
-                                result.on_hover_text("Click to go to source line");
+                                ui.label(source_line.unwrap_or("<empty>"));
                             });
                         });
                     })
@@ -103,7 +91,29 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 ui.label("exec");
             }
             "Memory" => {
-                ui.label("rember");
+                ui.with_layout(
+                    egui::Layout::top_down(egui::Align::Min)
+                        .with_main_wrap(true)
+                        .with_cross_justify(false),
+                    |ui| {
+                        for (addr, value, chr) in (0..900).map(|a| {
+                            (
+                                a,
+                                self.tide.cpu.memory[Address(a)],
+                                self.tide.cpu.memory[Address(a)]
+                                    .read_as_char()
+                                    .unwrap_or(' '),
+                            )
+                        }) {
+                            let _ = ui.monospace(format!(
+                                "{:03}  {:05} {}  ",
+                                addr,
+                                value,
+                                if chr.is_ascii() { chr } else { ' ' }
+                            ));
+                        }
+                    },
+                );
             }
 
             "Assembly Errors" => {
@@ -115,23 +125,23 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             "Registers" => {
                 egui::Grid::new(1).show(ui, |ui| {
                     ui.label("Accumulator");
-                    ui.label("XXXXX");
+                    ui.label(format!("{:05}", self.tide.cpu.alu.acc));
                     ui.end_row();
 
                     ui.label("Instruction Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.cu.ip));
                     ui.end_row();
 
                     ui.label("Stack Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.alu.sp));
                     ui.end_row();
 
                     ui.label("Base Pointer");
-                    ui.label("XXX");
+                    ui.label(format!("{:03}", self.tide.cpu.alu.bp));
                     ui.end_row();
 
                     ui.label("Instruction Register");
-                    ui.label("XXXXX");
+                    //ui.label(format!("{:05}", self.tide.cpu.cu.ir));
                     ui.end_row();
                 });
             }
