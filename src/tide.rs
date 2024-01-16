@@ -37,7 +37,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             "Source" => {
                 ui.add_sized(
                     ui.available_size(),
-                    egui::TextEdit::multiline(&mut self.tide.source),
+                    egui::TextEdit::multiline(&mut self.tide.source).code_editor(),
                 );
             }
             "Listing" => {
