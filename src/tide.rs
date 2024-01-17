@@ -124,10 +124,20 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             }
 
             "Assembly Errors" => {
-                ui.code(&self.tide.error);
+                ui.add_sized(
+                    ui.available_size(),
+                    egui::TextEdit::multiline(&mut self.tide.error)
+                        .code_editor()
+                        .interactive(false),
+                );
             }
             "Input/Output" => {
-                ui.code(&self.tide.output);
+                ui.add_sized(
+                    ui.available_size(),
+                    egui::TextEdit::multiline(&mut self.tide.output)
+                        .code_editor()
+                        .interactive(false),
+                );
                 ui.text_edit_singleline(&mut self.tide.input_buffer);
                 ui.input(|i| {
                     if i.key_pressed(egui::Key::Enter) && !self.tide.input_buffer.is_empty() {
@@ -447,6 +457,7 @@ impl eframe::App for TIDE {
                     }
                 });
             });
+
             if start_pressed {
                 self.start()
                     .map_err(|err| self.error.push_str(&err))
