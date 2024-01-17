@@ -66,9 +66,14 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     })
                     .body(|mut body| {
                         body.rows(15.0, num_rows, |mut row| {
-                            let mut source_lines = self.tide.source.split('\n');
                             let index = row.index();
-                            let source_line = &source_lines.nth(index);
+
+                            let mut source_lines = self.tide.source.split('\n');
+                            let source_line = self
+                                .tide
+                                .source_map
+                                .get(&Address(index as u16))
+                                .and_then(|line_num| source_lines.nth(*line_num));
 
                             row.col(|ui| {
                                 ui.label(format!("{:03}", index));
@@ -180,7 +185,8 @@ struct TIDE {
     source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
     cpu: Cpu,
-    cpu_running: bool,
+    cpu_state: Output,
+    running_to_completion: bool,
 
     input_buffer: String,
     input: String,
@@ -197,18 +203,20 @@ impl TIDE {
         self.input_buffer.clear();
         self.output.clear();
         self.error.clear();
+        self.cpu = Cpu::new();
 
         let result = assemble(&self.source)?;
         self.symbols = result.0;
         self.source_map = result.1;
         self.cpu.set_memory(&result.2);
+        self.cpu_state = Output::ReadyToCycle;
 
         Ok(())
     }
 
     fn run(&mut self) -> Result<(), String> {
         self.assemble()?;
-        self.cpu_running = true;
+        self.running_to_completion = true;
 
         Ok(())
     }
@@ -221,29 +229,53 @@ impl TIDE {
 
     fn stop(&mut self) {}
 
-    fn step(&mut self) -> Result<(), String> {
+    fn step(&mut self) {
+        let result = match self.cpu_state {
+            Output::ReadyToCycle => {
+                if !self.input.is_empty() {
+                    let result = self.cpu.step(Input::String(self.input.clone()));
+                    self.input.clear();
+                    result
+                } else {
+                    self.cpu.step(Input::None)
+                }
+            }
+
+            _ => {
+                // TODO
+                return;
+            }
+        };
+
         let result = if !self.input.is_empty() {
-            let result = self.cpu.step(Input::String(self.input.clone()))?;
+            let result = self.cpu.step(Input::String(self.input.clone()));
             self.input.clear();
             result
         } else {
-            self.cpu.step(Input::None)?
+            self.cpu.step(Input::None)
         };
 
         match result {
-            Output::WaitingForChar => {}
-            Output::WaitingForInteger => {}
-            Output::WaitingForString => {}
-            Output::Char(c) => self.output.push(c),
-            Output::String(s) => self.output.push_str(&s),
-
-            Output::Stopped => {
-                self.cpu_running = false;
+            Ok(ref out @ Output::Char(c)) => {
+                self.cpu_state = out.clone();
+                self.output.push(c);
             }
-            Output::ReadyToCycle => {}
-        };
+            Ok(ref out @ Output::String(ref s)) => {
+                self.cpu_state = out.clone();
+                self.output.push_str(&s);
+            }
+            Ok(ref out @ Output::Stopped) => {
+                self.cpu_state = out.clone();
+                self.running_to_completion = false;
+            }
+            Ok(out) => self.cpu_state = out,
 
-        Ok(())
+            Err(s) => {
+                self.cpu_state = Output::Stopped;
+                self.running_to_completion = false;
+                self.error.push_str(&s);
+            }
+        };
     }
 
     fn step_over(&mut self) {
@@ -289,7 +321,8 @@ impl Default for TIDE {
             source_map: HashMap::new(),
             breakpoints: vec![],
             cpu: Cpu::new(),
-            cpu_running: false,
+            cpu_state: Output::Stopped,
+            running_to_completion: false,
 
             input_buffer: String::new(),
             input: String::new(),
@@ -380,7 +413,8 @@ impl eframe::App for TIDE {
                     ui.separator();
 
                     if ui.button("Step Over").clicked() {
-                        self.step_over();
+                        self.step();
+                        //self.step_over();
                     }
 
                     if ui.button("Step Into").clicked() {
@@ -413,13 +447,10 @@ impl eframe::App for TIDE {
             self.breakpoints = cloned.breakpoints;
             self.input_buffer = cloned.input_buffer;
             self.input = cloned.input;
-            self.output = cloned.output;
-            self.cpu_running = cloned.cpu_running;
+            self.cpu_state = cloned.cpu_state;
 
-            if self.cpu_running {
-                self.step()
-                    .map_err(|err| self.error.push_str(&err))
-                    .unwrap_or_default();
+            if self.running_to_completion {
+                self.step();
             }
         });
     }
