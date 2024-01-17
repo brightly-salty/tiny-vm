@@ -144,6 +144,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         self.tide.input.clear();
                         self.tide.input.push_str(&self.tide.input_buffer);
                         self.tide.input_buffer.clear();
+                        self.tide.output.push('\n');
                     }
                 });
             }
