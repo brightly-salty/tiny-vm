@@ -147,35 +147,35 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             "Registers" => {
                 egui::Grid::new(1).show(ui, |ui| {
                     ui.label("Accumulator");
-                    ui.label(format!("{}", self.tide.cpu.alu.acc));
+                    ui.monospace(format!("{}", self.tide.cpu.alu.acc));
                     ui.end_row();
 
                     ui.label("Instruction Pointer");
-                    ui.label(format!("{}", self.tide.cpu.cu.ip));
+                    ui.monospace(format!("{}", self.tide.cpu.cu.ip));
                     ui.end_row();
 
                     ui.label("Stack Pointer");
-                    ui.label(format!("{}", self.tide.cpu.alu.sp));
+                    ui.monospace(format!("{}", self.tide.cpu.alu.sp));
                     ui.end_row();
 
                     ui.label("Base Pointer");
-                    ui.label(format!("{}", self.tide.cpu.alu.bp));
+                    ui.monospace(format!("{}", self.tide.cpu.alu.bp));
                     ui.end_row();
 
                     ui.label("Instruction Register");
-                    ui.label(format!("{}", self.tide.cpu.cu.ir.as_byte()));
+                    ui.monospace(format!("{}", self.tide.cpu.cu.ir.as_byte()));
                     ui.end_row();
                 });
             }
             "Stack" => {
                 for byte in self.tide.cpu.get_stack() {
-                    ui.label(byte.to_string());
+                    ui.monospace(byte.to_string());
                 }
             }
             "Symbols" => {
                 // FIXME: Sorting is not yet guaranteed
                 for address in self.tide.symbols.keys() {
-                    ui.label(format!("{:03}   {}", address, self.tide.symbols[address]));
+                    ui.monospace(format!("{:03}   {}", address, self.tide.symbols[address]));
                 }
             }
 
