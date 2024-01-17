@@ -119,7 +119,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             }
 
             "Assembly Errors" => {
-                ui.label("asm");
+                ui.code(&self.tide.error);
             }
             "Input/Output" => {
                 ui.code(&self.tide.output);
@@ -187,37 +187,47 @@ struct TIDE {
 
     output: String,
 
+    error: String,
+
     dock_state: DockState<String>,
 }
 
 impl TIDE {
-    fn assemble(&mut self) {
-        let result = assemble(&self.source).unwrap();
+    fn assemble(&mut self) -> Result<(), String> {
+        self.input_buffer.clear();
+        self.output.clear();
+        self.error.clear();
+
+        let result = assemble(&self.source)?;
         self.symbols = result.0;
         self.source_map = result.1;
         self.cpu.set_memory(&result.2);
+
+        Ok(())
     }
 
-    fn run(&mut self) {
-        self.assemble();
-        self.cpu.run().unwrap();
+    fn run(&mut self) -> Result<(), String> {
+        self.assemble()?;
+        self.cpu_running = true;
+
+        Ok(())
     }
 
-    fn start(&mut self) {
-        self.assemble();
+    fn start(&mut self) -> Result<(), String> {
+        self.assemble()?;
+
+        Ok(())
     }
 
-    fn stop(&mut self) {
-        todo!();
-    }
+    fn stop(&mut self) {}
 
-    fn step(&mut self) {
+    fn step(&mut self) -> Result<(), String> {
         let result = if !self.input.is_empty() {
-            let result = self.cpu.step(Input::String(self.input.clone())).unwrap();
+            let result = self.cpu.step(Input::String(self.input.clone()))?;
             self.input.clear();
             result
         } else {
-            self.cpu.step(Input::None).unwrap()
+            self.cpu.step(Input::None)?
         };
 
         match result {
@@ -231,7 +241,9 @@ impl TIDE {
                 self.cpu_running = false;
             }
             Output::ReadyToCycle => {}
-        }
+        };
+
+        Ok(())
     }
 
     fn step_over(&mut self) {
@@ -283,6 +295,8 @@ impl Default for TIDE {
             input: String::new(),
 
             output: String::new(),
+
+            error: String::new(),
 
             dock_state,
         }
@@ -339,19 +353,24 @@ impl eframe::App for TIDE {
 
                 ui.menu_button("Build", |ui| {
                     if ui.button("Assemble").clicked() {
-                        self.input_buffer.clear();
-                        self.output.clear();
-                        self.assemble();
+                        self.stop();
+                        self.assemble()
+                            .map_err(|err| self.error.push_str(&err))
+                            .unwrap_or_default();
                     }
                 });
 
                 ui.menu_button("Debug", |ui| {
                     if ui.button("Start").clicked() {
-                        self.start();
+                        self.start()
+                            .map_err(|err| self.error.push_str(&err))
+                            .unwrap_or_default();
                     }
 
                     if ui.button("Start Without Debugging").clicked() {
-                        self.run();
+                        self.run()
+                            .map_err(|err| self.error.push_str(&err))
+                            .unwrap_or_default();
                     }
 
                     if ui.button("Stop").clicked() {
@@ -397,6 +416,11 @@ impl eframe::App for TIDE {
             self.output = cloned.output;
             self.cpu_running = cloned.cpu_running;
 
+            if self.cpu_running {
+                self.step()
+                    .map_err(|err| self.error.push_str(&err))
+                    .unwrap_or_default();
+            }
         });
     }
 }
