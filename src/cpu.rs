@@ -1,5 +1,4 @@
 use crate::types::{Address, Byte, Instruction};
-use rand::Rng;
 use std::io::Read;
 use std::ops::{Index, IndexMut};
 
@@ -11,7 +10,7 @@ impl Memory {
         let mut rng = rand::thread_rng();
         let mut buffer = [Byte(0); 1000];
         for n in &mut buffer {
-            *n = Byte(rng.gen_range(0..10_000));
+            *n = Byte::random(&mut rng);
         }
         Self(buffer)
     }

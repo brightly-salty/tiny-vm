@@ -1,5 +1,6 @@
 use crate::types::{Address, Byte};
 use std::collections::HashMap;
+use rand::thread_rng;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct AsmLabel(String);
@@ -292,8 +293,9 @@ fn opcode_to_machine(
         AsmOc::CallInputString => v.push(Byte::new(16975)),
         AsmOc::Db(b) => v.push(b),
         AsmOc::Ds(n) => {
+            let mut rng = thread_rng();
             for _ in 0..n {
-                v.push(Byte::new(0));
+                v.push(Byte::random(&mut rng));
             }
         }
         AsmOc::Dc(string) => {

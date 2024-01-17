@@ -1,4 +1,6 @@
 use std::fmt;
+use rand::rngs::ThreadRng;
+use rand::Rng;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default, Hash)]
 pub struct Address(pub u16); //0-999 (3 decimal digits)
@@ -62,6 +64,10 @@ impl Byte {
     pub fn new(b: i32) -> Self {
         debug_assert!(b < 100_000 && b > -100_000);
         Self(b)
+    }
+
+    pub fn random(rng: &mut ThreadRng) -> Self {
+        Self(rng.gen_range(0..10_000))
     }
 }
 
