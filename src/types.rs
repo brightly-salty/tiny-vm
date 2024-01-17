@@ -28,6 +28,9 @@ impl fmt::Display for Address {
 pub struct Byte(pub i32); //-99999-99999 (5 decimal digits plus sign)
 
 impl Byte {
+    /// # Errors
+    ///
+    /// Will return `Err` if the byte is not a valid instruction
     pub fn read_as_instruction(self) -> Result<Instruction, String> {
         match u32::try_from(self.0) {
             Ok(n) if n < 100_000 => Ok(Instruction {
@@ -42,6 +45,9 @@ impl Byte {
         }
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if the byte is not a valid address
     pub fn read_as_address(self) -> Result<Address, String> {
         match u16::try_from(self.0) {
             Ok(n) if n < 1000 => Ok(Address(n)),
@@ -54,6 +60,9 @@ impl Byte {
         Self(i32::from(c as u8))
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if the byte is not a valid ASCII char
     pub fn read_as_char(self) -> Result<char, String> {
         u8::try_from(self.0)
             .map(char::from)
@@ -84,4 +93,11 @@ pub struct Opcode(pub u8); //0-99 (2 decimal digits)
 pub struct Instruction {
     pub opcode: Opcode,
     pub operand: Address,
+}
+
+impl Instruction {
+    #[must_use]
+    pub const fn as_byte(&self) -> Byte {
+        Byte((self.opcode.0 as i32).saturating_mul(1_000).saturating_add(self.operand.0 as i32))
+    }
 }
