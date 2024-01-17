@@ -132,7 +132,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 );
             }
             "Input/Output" => {
-                ui.text_edit_singleline(&mut self.tide.input_buffer);
+                ui.text_edit_singleline(&mut self.tide.input);
                 ui.add_sized(
                     ui.available_size(),
                     egui::TextEdit::multiline(&mut self.tide.output)
@@ -140,12 +140,8 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .interactive(false),
                 );
                 ui.input(|i| {
-                    if i.key_pressed(egui::Key::Enter) && !self.tide.input_buffer.is_empty() {
-                        self.tide.input.clear();
-                        self.tide.input.push_str(&self.tide.input_buffer);
-                        self.tide.input_buffer.clear();
-                        self.tide.output.push('\n');
-                    }
+                    self.tide.input_ready =
+                        i.key_pressed(egui::Key::Enter) && !self.tide.input.is_empty();
                 });
             }
             "Registers" => {
@@ -199,8 +195,8 @@ struct TIDE {
     cpu_state: Output,
     running_to_completion: bool,
 
-    input_buffer: String,
     input: String,
+    input_ready: bool,
 
     output: String,
 
@@ -211,7 +207,8 @@ struct TIDE {
 
 impl TIDE {
     fn assemble(&mut self) -> Result<(), String> {
-        self.input_buffer.clear();
+        self.input.clear();
+        self.input_ready = false;
         self.output.clear();
         self.error.clear();
         self.cpu = Cpu::new();
@@ -243,25 +240,40 @@ impl TIDE {
     fn step(&mut self) {
         let result = match self.cpu_state {
             Output::WaitingForString => {
-                if !self.input.is_empty() {
+                if self.input_ready {
                     let result = self.cpu.step(Input::String(self.input.clone()));
+                    self.output.push_str(&self.input);
+                    self.output.push('\n');
                     self.input.clear();
+                    self.input_ready = false;
                     result
                 } else {
                     return;
                 }
             }
             Output::WaitingForChar => {
-                if !self.input.is_empty() {
-                    self.cpu.step(Input::Char(self.input.pop().unwrap()))
+                if self.input_ready && self.input.len() == 1 {
+                    let c = self.input.pop().unwrap();
+                    let result = self.cpu.step(Input::Char(c));
+                    self.output.push(c);
+                    self.output.push('\n');
+                    self.input_ready = false;
+                    result
                 } else {
                     return;
                 }
             }
             Output::WaitingForInteger => {
-                if !self.input.is_empty() {
+                if self.input_ready {
                     match self.input.parse() {
-                        Ok(i) => self.cpu.step(Input::Integer(i)),
+                        Ok(i) => {
+                            let result = self.cpu.step(Input::Integer(i));
+                            self.output.push_str(&self.input);
+                            self.output.push('\n');
+                            self.input.clear();
+                            self.input_ready = false;
+                            result
+                        }
                         Err(_) => return,
                     }
                 } else {
@@ -345,8 +357,8 @@ impl Default for TIDE {
             cpu_state: Output::Stopped,
             running_to_completion: false,
 
-            input_buffer: String::new(),
             input: String::new(),
+            input_ready: false,
 
             output: String::new(),
 
@@ -507,8 +519,8 @@ impl eframe::App for TIDE {
             self.source = cloned.source;
             self.symbols = cloned.symbols;
             self.breakpoints = cloned.breakpoints;
-            self.input_buffer = cloned.input_buffer;
             self.input = cloned.input;
+            self.input_ready = cloned.input_ready;
             self.cpu_state = cloned.cpu_state;
 
             if self.running_to_completion {
