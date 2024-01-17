@@ -132,13 +132,13 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 );
             }
             "Input/Output" => {
+                ui.text_edit_singleline(&mut self.tide.input_buffer);
                 ui.add_sized(
                     ui.available_size(),
                     egui::TextEdit::multiline(&mut self.tide.output)
                         .code_editor()
                         .interactive(false),
                 );
-                ui.text_edit_singleline(&mut self.tide.input_buffer);
                 ui.input(|i| {
                     if i.key_pressed(egui::Key::Enter) && !self.tide.input_buffer.is_empty() {
                         self.tide.input.clear();
