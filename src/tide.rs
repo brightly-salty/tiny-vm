@@ -105,12 +105,14 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                     .unwrap_or(' '),
                             )
                         }) {
-                            let _ = ui.monospace(format!(
+                            ui.monospace(format!(
                                 "{:03}  {:05} {}  ",
                                 addr,
                                 value,
                                 if chr.is_ascii() { chr } else { ' ' }
                             ));
+
+                            ui.end_row();
                         }
                     },
                 );
