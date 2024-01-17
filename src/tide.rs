@@ -527,5 +527,7 @@ impl eframe::App for TIDE {
                 self.step();
             }
         });
+
+        ctx.request_repaint();
     }
 }
