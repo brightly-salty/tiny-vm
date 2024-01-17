@@ -155,8 +155,11 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .interactive(false),
                 );
                 ui.input(|i| {
-                    self.tide.input_ready =
-                        i.key_pressed(egui::Key::Enter) && !self.tide.input.is_empty();
+                    // Don't let a running Cpu eat our input on a different frame
+                    // Let stepping Cpus eat it or discard it the step after we press enter,
+                    // regardless of how many frames removed it is
+                    self.tide.input_ready = i.key_pressed(egui::Key::Enter)
+                        || (!self.tide.running_to_completion && self.tide.input_ready);
                 });
             }
             "Registers" => {
