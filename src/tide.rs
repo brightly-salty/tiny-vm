@@ -9,6 +9,14 @@ use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::Address;
 
+#[derive(Clone, Copy)]
+enum Focus {
+    None,
+    Errors,
+    Input,
+    Output,
+}
+
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
@@ -132,7 +140,14 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 );
             }
             "Input/Output" => {
-                ui.text_edit_singleline(&mut self.tide.input);
+                if let Focus::Input = self.tide.focus_redirect {
+                    ui.text_edit_singleline(&mut self.tide.input)
+                        .request_focus();
+                    self.tide.focus_redirect = Focus::None;
+                } else {
+                    ui.text_edit_singleline(&mut self.tide.input);
+                }
+
                 ui.add_sized(
                     ui.available_size(),
                     egui::TextEdit::multiline(&mut self.tide.output)
@@ -164,6 +179,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 
                     ui.label("Instruction Register");
                     ui.monospace(format!("{}", self.tide.cpu.cu.ir.as_byte()));
+
                     ui.end_row();
                 });
             }
@@ -200,6 +216,8 @@ struct TIDE {
     cpu_state: Output,
     running_to_completion: bool,
 
+    focus_redirect: Focus,
+
     input: String,
     input_ready: bool,
 
@@ -225,6 +243,16 @@ impl TIDE {
         self.cpu_state = Output::ReadyToCycle;
 
         Ok(())
+    }
+
+    fn focused_error(&mut self, s: &str) {
+        self.error.push_str(s);
+        self.focus_redirect = Focus::Errors;
+    }
+
+    fn focused_output(&mut self, s: &str) {
+        self.output.push_str(s);
+        self.focus_redirect = Focus::Output;
     }
 
     fn run(&mut self) -> Result<(), String> {
@@ -253,6 +281,8 @@ impl TIDE {
                     self.input_ready = false;
                     result
                 } else {
+                    // FIXME: Can't select Errors tab while waiting for input
+                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -265,6 +295,7 @@ impl TIDE {
                     self.input_ready = false;
                     result
                 } else {
+                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -282,6 +313,7 @@ impl TIDE {
                         Err(_) => return,
                     }
                 } else {
+                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -297,21 +329,23 @@ impl TIDE {
             Ok(Output::Char(c)) => {
                 self.cpu_state = Output::ReadyToCycle;
                 self.output.push(c);
+                self.focus_redirect = Focus::Output;
             }
             Ok(Output::String(ref s)) => {
                 self.cpu_state = Output::ReadyToCycle;
-                self.output.push_str(&s);
+                self.focused_output(s);
             }
             Ok(ref out @ Output::Stopped) => {
                 self.cpu_state = out.clone();
                 self.running_to_completion = false;
+                self.error.push_str("Completed");
             }
             Ok(out) => self.cpu_state = out,
 
             Err(s) => {
                 self.cpu_state = Output::Stopped;
                 self.running_to_completion = false;
-                self.error.push_str(&s);
+                self.focused_error(&s);
             }
         };
     }
@@ -361,6 +395,8 @@ impl Default for TIDE {
             cpu: Cpu::new(),
             cpu_state: Output::Stopped,
             running_to_completion: false,
+
+            focus_redirect: Focus::None,
 
             input: String::new(),
             input_ready: false,
@@ -462,7 +498,7 @@ impl eframe::App for TIDE {
                     {
                         self.stop();
                         self.assemble()
-                            .map_err(|err| self.error.push_str(&err))
+                            .map_err(|err| self.focused_error(&err))
                             .unwrap_or_default();
                     }
                 });
@@ -488,12 +524,12 @@ impl eframe::App for TIDE {
 
             if start_pressed {
                 self.start()
-                    .map_err(|err| self.error.push_str(&err))
+                    .map_err(|err| self.focused_error(&err))
                     .unwrap_or_default();
             }
             if run_pressed {
                 self.run()
-                    .map_err(|err| self.error.push_str(&err))
+                    .map_err(|err| self.focused_error(&err))
                     .unwrap_or_default();
             }
 
@@ -516,6 +552,28 @@ impl eframe::App for TIDE {
 
             let mut cloned = self.clone();
 
+            match self.focus_redirect {
+                Focus::None => {}
+                Focus::Errors => {
+                    let tab = self
+                        .dock_state
+                        .find_tab(&String::from("Assembly Errors"))
+                        .unwrap();
+
+                    self.dock_state.set_active_tab(tab);
+                    self.focus_redirect = Focus::None;
+                }
+                Focus::Input | Focus::Output => {
+                    let tab = self
+                        .dock_state
+                        .find_tab(&String::from("Input/Output"))
+                        .unwrap();
+
+                    self.dock_state.set_active_tab(tab);
+                    self.focus_redirect = Focus::None;
+                }
+            };
+
             DockArea::new(&mut self.dock_state)
                 .style(Style::from_egui(ui.style().as_ref()))
                 .show_inside(ui, &mut TINYTabViewer { tide: &mut cloned });
@@ -527,6 +585,7 @@ impl eframe::App for TIDE {
             self.input = cloned.input;
             self.input_ready = cloned.input_ready;
             self.cpu_state = cloned.cpu_state;
+            self.focus_redirect = cloned.focus_redirect;
 
             if self.running_to_completion {
                 self.step();
