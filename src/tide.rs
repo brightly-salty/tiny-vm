@@ -6,7 +6,7 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 use std::collections::HashMap;
 use tiny_vm::assemble;
-use tiny_vm::cpu::Cpu;
+use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::Address;
 
 fn main() -> Result<(), eframe::Error> {
@@ -122,7 +122,15 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 ui.label("asm");
             }
             "Input/Output" => {
-                ui.label("IO");
+                ui.code(&self.tide.output);
+                ui.text_edit_singleline(&mut self.tide.input_buffer);
+                ui.input(|i| {
+                    if i.key_pressed(egui::Key::Enter) && !self.tide.input_buffer.is_empty() {
+                        self.tide.input.clear();
+                        self.tide.input.push_str(&self.tide.input_buffer);
+                        self.tide.input_buffer.clear();
+                    }
+                });
             }
             "Registers" => {
                 egui::Grid::new(1).show(ui, |ui| {
@@ -172,6 +180,12 @@ struct TIDE {
     source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
     cpu: Cpu,
+    cpu_running: bool,
+
+    input_buffer: String,
+    input: String,
+
+    output: String,
 
     dock_state: DockState<String>,
 }
@@ -198,9 +212,26 @@ impl TIDE {
     }
 
     fn step(&mut self) {
-        self.cpu
-            .step(std::io::stdin().lock(), std::io::stdout().lock())
-            .unwrap();
+        let result = if !self.input.is_empty() {
+            let result = self.cpu.step(Input::String(self.input.clone())).unwrap();
+            self.input.clear();
+            result
+        } else {
+            self.cpu.step(Input::None).unwrap()
+        };
+
+        match result {
+            Output::WaitingForChar => {}
+            Output::WaitingForInteger => {}
+            Output::WaitingForString => {}
+            Output::Char(c) => self.output.push(c),
+            Output::String(s) => self.output.push_str(&s),
+
+            Output::Stopped => {
+                self.cpu_running = false;
+            }
+            Output::ReadyToCycle => {}
+        }
     }
 
     fn step_over(&mut self) {
@@ -246,6 +277,12 @@ impl Default for TIDE {
             source_map: HashMap::new(),
             breakpoints: vec![],
             cpu: Cpu::new(),
+            cpu_running: false,
+
+            input_buffer: String::new(),
+            input: String::new(),
+
+            output: String::new(),
 
             dock_state,
         }
@@ -302,6 +339,8 @@ impl eframe::App for TIDE {
 
                 ui.menu_button("Build", |ui| {
                     if ui.button("Assemble").clicked() {
+                        self.input_buffer.clear();
+                        self.output.clear();
                         self.assemble();
                     }
                 });
@@ -353,6 +392,11 @@ impl eframe::App for TIDE {
             self.source = cloned.source;
             self.symbols = cloned.symbols;
             self.breakpoints = cloned.breakpoints;
+            self.input_buffer = cloned.input_buffer;
+            self.input = cloned.input;
+            self.output = cloned.output;
+            self.cpu_running = cloned.cpu_running;
+
         });
     }
 }
