@@ -273,8 +273,8 @@ impl Cpu {
                 }
                 _ => {
                     // Push a call-frame onto the stack
-                    self.push(self.cu.ip.into_byte())?; // push return address
-                    self.push(self.alu.bp.into_byte())?; // push previous value of BP
+                    self.push(self.cu.ip.into_byte()); // push return address
+                    self.push(self.alu.bp.into_byte()); // push previous value of BP
                     self.alu.bp = self.alu.sp; // update value of BF
                     self.jump_to(adr); // jump to start of function
                 }
@@ -286,7 +286,7 @@ impl Cpu {
                 self.jump_to(address); // restore IP to return address
             }
             18 => {
-                self.push(self.alu.acc)?;
+                self.push(self.alu.acc);
             }
             19 => {
                 let byte = self.pop();
@@ -319,7 +319,7 @@ impl Cpu {
                 }
             }
             24 => {
-                self.push(c_adr())?;
+                self.push(c_adr());
             }
             25 => {
                 let byte = self.pop();
@@ -327,7 +327,7 @@ impl Cpu {
                 self.memory[address.read_as_address()?] = byte;
             }
             26 => {
-                self.push(adr.into_byte())?;
+                self.push(adr.into_byte());
             }
             x => return Err(format!("unrecognized opcode {x}")),
         }
@@ -364,11 +364,10 @@ impl Cpu {
         Ok(())
     }
 
-    fn push(&mut self, byte: Byte) -> Result<(), String> {
+    fn push(&mut self, byte: Byte) {
         self.alu.sp.0 = self.alu.sp.0.saturating_sub(1);
-        let address = self.memory[self.alu.sp].read_as_address()?;
+        let address = self.alu.sp;
         self.memory[address] = byte;
-        Ok(())
     }
 
     fn jump_to(&mut self, adr: Address) {
@@ -380,6 +379,15 @@ impl Cpu {
         let byte = self.memory[self.alu.sp];
         self.alu.sp.0 = self.alu.sp.0.saturating_add(1);
         byte
+    }
+
+    #[must_use]
+    pub fn get_stack(&self) -> Vec<Byte> {
+        let mut buffer = Vec::new();
+        for x in self.alu.sp.0..self.alu.bp.0 {
+            buffer.push(self.memory[Address(x)]);
+        }
+        buffer
     }
 
     /// # Panics
