@@ -336,8 +336,16 @@ impl Default for TIDE {
     }
 }
 
-const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::B);
+const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
+        alt: false,
+        ctrl: true,
+        shift: true,
+        mac_cmd: false,
+        command: false,
+    },
+    egui::Key::B,
+);
 const START_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F5);
 const RUN_SHORTCUT: egui::KeyboardShortcut =
