@@ -1,7 +1,6 @@
 use crate::types::{Address, Byte, Instruction};
 use rand::Rng;
-use std::io::BufRead;
-use std::io::Write;
+use std::io::Read;
 use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Copy)]
@@ -55,11 +54,38 @@ impl Alu {
     }
 }
 
+#[derive(Clone, Copy)]
+enum State {
+    WaitingForInput,
+    Stopped,
+    ReadyToCycle,
+}
+
+#[derive(Clone)]
+pub enum Input {
+    Char(char),
+    Integer(i32),
+    String(String),
+    None,
+}
+
+#[derive(Clone)]
+pub enum Output {
+    WaitingForChar,
+    WaitingForInteger,
+    WaitingForString,
+    Char(char),
+    String(String),
+    Stopped,
+    ReadyToCycle,
+}
+
 #[derive(Clone)]
 pub struct Cpu {
     pub cu: Cu,
     pub alu: Alu,
     pub memory: Memory,
+    state: State,
 }
 
 impl Default for Cpu {
@@ -68,6 +94,7 @@ impl Default for Cpu {
             cu: Cu::default(),
             alu: Alu::new(),
             memory: Memory::new(),
+            state: State::ReadyToCycle,
         }
     }
 }
@@ -80,12 +107,40 @@ impl Cpu {
 
     /// # Errors
     ///
-    /// Will return `Err` if there was an unrecoverable error while running the CPU
+    /// Will return `Err` if there was an unrecoverable error while running the CPU    
     pub fn run(&mut self) -> Result<(), String> {
+        let mut input = Input::None;
         loop {
-            let should_continue = self.step(std::io::stdin().lock(), std::io::stdout().lock())?;
-            if !should_continue {
-                break;
+            match self.step(input)? {
+                Output::WaitingForChar => {
+                    let mut buffer = [0; 2];
+                    std::io::stdin().read_exact(&mut buffer).map_err(|_| "Could not read char from stdin".to_owned())?;
+                    input = Input::Char(buffer[0] as char);
+                }
+                Output::WaitingForInteger => {
+                    let mut buffer = String::new();
+                    std::io::stdin().read_line(&mut buffer).map_err(|_| "Could not read integer from stdin".to_owned())?;
+                    input = Input::Integer(buffer.trim().parse().map_err(|_| "Could not read integer from stdin".to_owned())?);
+                }
+                Output::WaitingForString => {
+                    let mut buffer = String::new();
+                    std::io::stdin().read_line(&mut buffer).map_err(|_| "Could not read string from stdin".to_owned())?;
+                    input = Input::String(buffer.trim().to_owned());
+                }
+                Output::Char(c) => {
+                    print!("{c}");
+                    input = Input::None;
+                }
+                Output::String(s) => {
+                    println!("{s}");
+                    input = Input::None;
+                }
+                Output::ReadyToCycle => {
+                    input = Input::None;
+                }
+                Output::Stopped => {
+                    break;
+                }
             }
         }
         Ok(())
@@ -93,16 +148,47 @@ impl Cpu {
 
     /// # Errors
     ///
-    /// Will return `Err` if there was an unknown opcode
+    /// Will return `Err` if the wrong type of input is received or an unknown opcode is given
+    pub fn step(&mut self, input: Input) -> Result<Output, String> {
+        match (input, self.state) {
+            (Input::None, State::ReadyToCycle) => self.cycle(),
+            (Input::None, State::Stopped) => Ok(Output::Stopped),
+            (Input::String(s), State::WaitingForInput) => {
+                let mut addr = self.alu.acc.read_as_address()?;
+                for c in s.trim().chars() {
+                    self.memory[addr] = Byte::from_char(c);
+                    addr.0 = addr.0.saturating_add(1);
+                }
+                self.memory[addr] = Byte(0);
+                self.state = State::ReadyToCycle;
+                Ok(Output::ReadyToCycle)
+            }
+            (Input::Integer(i), State::WaitingForInput) => {
+                self.load_into_acc(Byte(i));
+                self.state = State::ReadyToCycle;
+                Ok(Output::ReadyToCycle)
+            }
+            (Input::Char(c), State::WaitingForInput) => {
+                self.load_into_acc(Byte::from_char(c));
+                self.state = State::ReadyToCycle;
+                Ok(Output::ReadyToCycle)
+            }
+            (_, _) => Err("Wrong input received".to_owned()),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
-    pub fn step<R: BufRead, W: Write>(&mut self, mut r: R, mut w: W) -> Result<bool, String> {
+    fn cycle(&mut self) -> Result<Output, String> {
         self.cu.ir = self.memory[self.cu.ip].read_as_instruction()?;
         self.cu.ip.0 = self.cu.ip.0.saturating_add(1);
         let adr = self.cu.ir.operand;
         let c_adr = || self.memory[adr];
         let imm = || self.cu.ir.operand.into_byte();
         match self.cu.ir.opcode.0 {
-            0 => return Ok(false),
+            0 => {
+                self.state = State::Stopped;
+                return Ok(Output::Stopped);
+            }
             1 => {
                 self.load_into_acc(c_adr());
             }
@@ -143,14 +229,10 @@ impl Cpu {
                 self.div_acc_by(imm())?;
             }
             10 => {
-                let mut buf = [0; 2];
-                r.read_exact(&mut buf)
-                    .map_err(|_| "Could not read a character from input stream".to_owned())?;
-                self.load_into_acc(Byte::from_char(char::from(buf[0])));
+                self.state = State::WaitingForInput;
+                return Ok(Output::WaitingForChar);
             }
-            11 => {
-                write!(w, "{}", self.alu.acc.read_as_char()?).unwrap();
-            }
+            11 => return Ok(Output::Char(self.alu.acc.read_as_char()?)),
             12 => {
                 self.jump_to(adr);
             }
@@ -170,10 +252,26 @@ impl Cpu {
                 }
             }
             16 => match self.cu.ir.operand {
-                Address(900) => self.print_integer(w),
-                Address(925) => self.print_string(w)?,
-                Address(950) => self.input_integer(r),
-                Address(975) => self.input_string(r)?,
+                Address(900) => return Ok(Output::String(self.alu.acc.0.to_string())),
+                Address(925) => {
+                    let mut address = self.alu.acc.read_as_address()?;
+                    let mut buffer = String::new();
+                    let mut value = self.memory[address];
+                    while value != Byte(0) {
+                        buffer.push(value.read_as_char()?);
+                        address.0 = address.0.saturating_add(1);
+                        value = self.memory[address];
+                    }
+                    return Ok(Output::String(buffer));
+                }
+                Address(950) => {
+                    self.state = State::WaitingForInput;
+                    return Ok(Output::WaitingForInteger);
+                }
+                Address(975) => {
+                    self.state = State::WaitingForInput;
+                    return Ok(Output::WaitingForString);
+                }
                 _ => {
                     // Push a call-frame onto the stack
                     self.push(self.cu.ip.into_byte())?; // push return address
@@ -234,7 +332,7 @@ impl Cpu {
             }
             x => return Err(format!("unrecognized opcode {x}")),
         }
-        Ok(true)
+        Ok(Output::ReadyToCycle)
     }
 
     fn load_into_acc(&mut self, b: Byte) {
@@ -283,45 +381,6 @@ impl Cpu {
         let byte = self.memory[self.alu.sp];
         self.alu.sp.0 = self.alu.sp.0.saturating_add(1);
         byte
-    }
-
-    fn print_integer<W: Write>(&self, mut w: W) {
-        writeln!(w, "{}", self.alu.acc.0).unwrap();
-        w.flush().unwrap();
-    }
-
-    fn print_string<W: Write>(&self, mut w: W) -> Result<(), String> {
-        let mut addr = self.alu.acc.read_as_address()?;
-        let mut buffer = String::new();
-        let mut value = self.memory[addr];
-        while value != Byte(0) {
-            buffer.push(value.read_as_char()?);
-            addr.0 = addr.0.saturating_add(1);
-            value = self.memory[addr];
-        }
-        write!(w, "{buffer}").unwrap();
-        w.flush()
-            .map_err(|_| "Could not flush output stream".to_owned())?;
-        Ok(())
-    }
-
-    fn input_integer<R: BufRead>(&mut self, mut r: R) {
-        let mut buffer = String::new();
-        r.read_line(&mut buffer).unwrap();
-        self.load_into_acc(Byte(buffer.trim().parse().unwrap()));
-    }
-
-    fn input_string<R: BufRead>(&mut self, mut r: R) -> Result<(), String> {
-        let mut buffer = String::new();
-        r.read_line(&mut buffer)
-            .map_err(|_| "Could not read line from input stream")?;
-        let mut addr = self.alu.acc.read_as_address()?;
-        for c in buffer.trim().chars() {
-            self.memory[addr] = Byte::from_char(c);
-            addr.0 = addr.0.saturating_add(1);
-        }
-        self.memory[addr] = Byte(0);
-        Ok(())
     }
 
     /// # Panics
