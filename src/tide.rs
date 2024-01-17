@@ -168,10 +168,15 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 });
             }
             "Stack" => {
-                ui.label("pancake");
+                for byte in self.tide.cpu.get_stack() {
+                    ui.label(byte.to_string());
+                }
             }
             "Symbols" => {
-                ui.label("@#$%");
+                // FIXME: Sorting is not yet guaranteed
+                for address in self.tide.symbols.keys() {
+                    ui.label(format!("{:03}   {}", address, self.tide.symbols[address]));
+                }
             }
 
             _ => {
