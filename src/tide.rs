@@ -241,15 +241,33 @@ impl TIDE {
 
     fn step(&mut self) {
         let result = match self.cpu_state {
-            Output::ReadyToCycle => {
+            Output::WaitingForString => {
                 if !self.input.is_empty() {
                     let result = self.cpu.step(Input::String(self.input.clone()));
                     self.input.clear();
                     result
                 } else {
-                    self.cpu.step(Input::None)
+                    return;
                 }
             }
+            Output::WaitingForChar => {
+                if !self.input.is_empty() {
+                    self.cpu.step(Input::Char(self.input.pop().unwrap()))
+                } else {
+                    return;
+                }
+            }
+            Output::WaitingForInteger => {
+                if !self.input.is_empty() {
+                    match self.input.parse() {
+                        Ok(i) => self.cpu.step(Input::Integer(i)),
+                        Err(_) => return,
+                    }
+                } else {
+                    return;
+                }
+            }
+            Output::ReadyToCycle => self.cpu.step(Input::None),
 
             _ => {
                 // TODO
@@ -257,21 +275,13 @@ impl TIDE {
             }
         };
 
-        let result = if !self.input.is_empty() {
-            let result = self.cpu.step(Input::String(self.input.clone()));
-            self.input.clear();
-            result
-        } else {
-            self.cpu.step(Input::None)
-        };
-
         match result {
-            Ok(ref out @ Output::Char(c)) => {
-                self.cpu_state = out.clone();
+            Ok(Output::Char(c)) => {
+                self.cpu_state = Output::ReadyToCycle;
                 self.output.push(c);
             }
-            Ok(ref out @ Output::String(ref s)) => {
-                self.cpu_state = out.clone();
+            Ok(Output::String(ref s)) => {
+                self.cpu_state = Output::ReadyToCycle;
                 self.output.push_str(&s);
             }
             Ok(ref out @ Output::Stopped) => {
