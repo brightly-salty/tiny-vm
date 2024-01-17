@@ -336,6 +336,21 @@ impl Default for TIDE {
     }
 }
 
+const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::B);
+const START_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F5);
+const RUN_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::F5);
+const STEP_OVER_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F10);
+const STEP_INTO_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F11);
+const STOP_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::F5);
+const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F9);
+
 impl eframe::App for TIDE {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -385,7 +400,9 @@ impl eframe::App for TIDE {
                 });
 
                 ui.menu_button("Build", |ui| {
-                    if ui.button("Assemble").clicked() {
+                    if ui.button("Assemble").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT))
+                    {
                         self.stop();
                         self.assemble()
                             .map_err(|err| self.error.push_str(&err))
@@ -394,34 +411,48 @@ impl eframe::App for TIDE {
                 });
 
                 ui.menu_button("Debug", |ui| {
-                    if ui.button("Start").clicked() {
+                    // Ordering is important for stop/run/start because they *consume* shortcuts; longest
+                    // shortcuts should be checked first when the same logical key is used with
+                    // different modifiers
+                    let stop_pressed = ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
+                    let run_pressed = ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
+                    let start_pressed = ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
+
+                    let step_over_pressed =
+                        ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
+                    let step_into_pressed =
+                        ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
+                    let breakpoint_pressed =
+                        ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
+
+                    if ui.button("Start").clicked() || start_pressed {
                         self.start()
                             .map_err(|err| self.error.push_str(&err))
                             .unwrap_or_default();
                     }
 
-                    if ui.button("Start Without Debugging").clicked() {
+                    if ui.button("Start Without Debugging").clicked() || run_pressed {
                         self.run()
                             .map_err(|err| self.error.push_str(&err))
                             .unwrap_or_default();
                     }
 
-                    if ui.button("Stop").clicked() {
+                    if ui.button("Stop").clicked() || stop_pressed {
                         self.stop();
                     }
 
                     ui.separator();
 
-                    if ui.button("Step Over").clicked() {
+                    if ui.button("Step Over").clicked() || step_over_pressed {
                         self.step();
                         //self.step_over();
                     }
 
-                    if ui.button("Step Into").clicked() {
+                    if ui.button("Step Into").clicked() || step_into_pressed {
                         self.step_into();
                     }
 
-                    if ui.button("Toggle Breakpoint").clicked() {
+                    if ui.button("Toggle Breakpoint").clicked() || breakpoint_pressed {
                         self.toggle_breakpoint();
                     }
 
