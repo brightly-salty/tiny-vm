@@ -362,6 +362,17 @@ const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
 impl eframe::App for TIDE {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Ordering is important for stop/run/start because they *consume* shortcuts; longest
+            // shortcuts should be checked first when the same logical key is used with
+            // different modifiers
+            let mut stop_pressed = ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
+            let mut run_pressed = ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
+            let mut start_pressed = ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
+
+            let mut step_over_pressed = ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
+            let mut step_into_pressed = ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
+            let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
+
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
@@ -419,50 +430,13 @@ impl eframe::App for TIDE {
                 });
 
                 ui.menu_button("Debug", |ui| {
-                    // Ordering is important for stop/run/start because they *consume* shortcuts; longest
-                    // shortcuts should be checked first when the same logical key is used with
-                    // different modifiers
-                    let stop_pressed = ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
-                    let run_pressed = ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
-                    let start_pressed = ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
-
-                    let step_over_pressed =
-                        ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
-                    let step_into_pressed =
-                        ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
-                    let breakpoint_pressed =
-                        ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
-
-                    if ui.button("Start").clicked() || start_pressed {
-                        self.start()
-                            .map_err(|err| self.error.push_str(&err))
-                            .unwrap_or_default();
-                    }
-
-                    if ui.button("Start Without Debugging").clicked() || run_pressed {
-                        self.run()
-                            .map_err(|err| self.error.push_str(&err))
-                            .unwrap_or_default();
-                    }
-
-                    if ui.button("Stop").clicked() || stop_pressed {
-                        self.stop();
-                    }
-
+                    start_pressed |= ui.button("Start").clicked();
+                    run_pressed |= ui.button("Start Without Debugging").clicked();
+                    stop_pressed |= ui.button("Stop").clicked();
                     ui.separator();
-
-                    if ui.button("Step Over").clicked() || step_over_pressed {
-                        self.step();
-                        //self.step_over();
-                    }
-
-                    if ui.button("Step Into").clicked() || step_into_pressed {
-                        self.step_into();
-                    }
-
-                    if ui.button("Toggle Breakpoint").clicked() || breakpoint_pressed {
-                        self.toggle_breakpoint();
-                    }
+                    step_over_pressed |= ui.button("Step Over").clicked();
+                    step_into_pressed |= ui.button("Step Into").clicked();
+                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked();
 
                     ui.separator();
                 });
@@ -473,6 +447,33 @@ impl eframe::App for TIDE {
                     }
                 });
             });
+            if start_pressed {
+                self.start()
+                    .map_err(|err| self.error.push_str(&err))
+                    .unwrap_or_default();
+            }
+            if run_pressed {
+                self.run()
+                    .map_err(|err| self.error.push_str(&err))
+                    .unwrap_or_default();
+            }
+
+            if stop_pressed {
+                self.stop();
+            }
+
+            if step_over_pressed {
+                self.step();
+                //self.step_over();
+            }
+
+            if step_into_pressed {
+                self.step_into();
+            }
+
+            if breakpoint_pressed {
+                self.toggle_breakpoint();
+            }
 
             let mut cloned = self.clone();
 
