@@ -1,6 +1,6 @@
 use crate::types::{Address, Byte, TinyError, TinyResult};
 use rand::thread_rng;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct AsmLabel(String);
@@ -70,7 +70,7 @@ impl AsmOpcode {
     }
 }
 
-type SymbolTable = HashMap<Address, String>;
+type SymbolTable = BTreeMap<Address, String>;
 
 type SourceMap = HashMap<Address, usize>;
 
@@ -99,7 +99,7 @@ impl AsmLabelMap {
 }
 
 fn create_symbol_table(map: AsmLabelMap) -> SymbolTable {
-    let mut symbols = HashMap::new();
+    let mut symbols = BTreeMap::new();
 
     symbols.insert(Address(900), "printInteger".to_owned());
     symbols.insert(Address(925), "printString".to_owned());

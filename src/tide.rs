@@ -4,7 +4,7 @@ use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
@@ -192,7 +192,6 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 }
             }
             "Symbols" => {
-                // FIXME: Sorting is not yet guaranteed
                 for address in self.tide.symbols.keys() {
                     ui.monospace(format!("{:03}   {}", address, self.tide.symbols[address]));
                 }
@@ -212,7 +211,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 #[derive(Clone)]
 struct TIDE {
     source: String,
-    symbols: HashMap<Address, String>, // Symbols
+    symbols: BTreeMap<Address, String>, // Symbols
     source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
     cpu: Cpu,
@@ -422,7 +421,7 @@ impl Default for TIDE {
 
         Self {
             source: String::new(),
-            symbols: HashMap::new(),
+            symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
             cpu: Cpu::new(),
