@@ -143,7 +143,6 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 if let Focus::Input = self.tide.focus_redirect {
                     ui.text_edit_singleline(&mut self.tide.input)
                         .request_focus();
-                    self.tide.focus_redirect = Focus::None;
                 } else {
                     ui.text_edit_singleline(&mut self.tide.input);
                 }
@@ -313,8 +312,6 @@ impl TIDE {
                     self.input_ready = false;
                     result
                 } else {
-                    // FIXME: Can't select Errors tab while waiting for input
-                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -327,7 +324,6 @@ impl TIDE {
                     self.input_ready = false;
                     result
                 } else {
-                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -345,7 +341,6 @@ impl TIDE {
                         Err(_) => return,
                     }
                 } else {
-                    self.focus_redirect = Focus::Input;
                     return;
                 }
             }
@@ -371,6 +366,14 @@ impl TIDE {
                 self.cpu_state = out.clone();
                 self.running_to_completion = false;
                 self.error.push_str("Completed");
+            }
+            Ok(
+                ref out @ Output::WaitingForChar
+                | ref out @ Output::WaitingForString
+                | ref out @ Output::WaitingForInteger,
+            ) => {
+                self.focus_redirect = Focus::Input;
+                self.cpu_state = out.clone();
             }
             Ok(out) => self.cpu_state = out,
 
@@ -617,7 +620,7 @@ impl eframe::App for TIDE {
             self.input = cloned.input;
             self.input_ready = cloned.input_ready;
             self.cpu_state = cloned.cpu_state;
-            self.focus_redirect = cloned.focus_redirect;
+            self.focus_redirect = Focus::None;
 
             if self.running_to_completion {
                 self.step();
