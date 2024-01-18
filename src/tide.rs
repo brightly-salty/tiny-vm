@@ -30,6 +30,13 @@ struct TINYTabViewer<'a> {
     tide: &'a mut TIDE,
 }
 
+fn text_editor(s: &mut String, ui: &mut Ui) {
+    let output = egui::TextEdit::multiline(s)
+        .code_editor()
+        .min_size(ui.available_size())
+        .show(ui);
+}
+
 impl<'a> TabViewer for TINYTabViewer<'a> {
     // This associated type is used to attach some data to each tab.
     type Tab = String;
@@ -43,10 +50,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
-                ui.add_sized(
-                    ui.available_size(),
-                    egui::TextEdit::multiline(&mut self.tide.source).code_editor(),
-                );
+                text_editor(&mut self.tide.source, ui);
             }
             "Listing" => {
                 let num_rows = 900;
