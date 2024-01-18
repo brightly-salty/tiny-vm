@@ -248,6 +248,36 @@ impl TIDE {
         Ok(())
     }
 
+    fn new_file(&mut self) -> Result<(), String> {
+        // TODO: Err if we need to save this file first
+        todo!();
+    }
+
+    fn open_file(&mut self) -> Result<(), String> {
+        // TODO: Err if we need to save this file first
+        todo!();
+    }
+
+    fn save_file(&mut self) -> Result<(), String> {
+        todo!();
+    }
+
+    fn save_file_as(&mut self) -> Result<(), String> {
+        todo!();
+    }
+
+    fn manage_file_result(result: Result<(), String>) {
+        match result {
+            Ok(_) => {} // Happy case; file should be open and ready to edit
+            Err(s) if s == "Close without saving?" => {
+                todo!(); // TODO: Show dialog for this
+            }
+            _ => {
+                todo!(); // TODO: Show separate dialog for file creation errors, etc.
+            }
+        }
+    }
+
     fn focused_error(&mut self, s: &str) {
         self.error.push_str(s);
         self.focus_redirect = Focus::Errors;
@@ -453,21 +483,21 @@ impl eframe::App for TIDE {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
-                        todo!();
+                        TIDE::manage_file_result(self.new_file());
                     }
 
                     if ui.button("Open").clicked() {
-                        todo!();
+                        TIDE::manage_file_result(self.open_file());
                     }
 
                     ui.separator();
 
                     if ui.button("Save").clicked() {
-                        todo!();
+                        TIDE::manage_file_result(self.save_file());
                     }
 
                     if ui.button("Save As").clicked() {
-                        todo!();
+                        TIDE::manage_file_result(self.save_file_as());
                     }
 
                     ui.separator();
