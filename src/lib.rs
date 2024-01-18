@@ -18,11 +18,12 @@ mod asm;
 pub mod cpu;
 pub mod types;
 pub use asm::assemble;
+use types::TinyResult;
 
 /// # Errors
 ///
 /// Will return an `Err` if the assembly could not be assembled
-pub fn run_assembly(s: &str) -> Result<(), String> {
+pub fn run_assembly(s: &str) -> TinyResult<()> {
     let (_, _, machine_code) = assemble(s)?;
     let mut cpu = cpu::Cpu::new();
     cpu.set_memory(&machine_code);

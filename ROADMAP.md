@@ -11,7 +11,6 @@
 
 ## Phase 2: Internal refactoring for performance and clarity
 
-- custom error types, better error handling
 - use enums or constants for tab names
 - do only two passes in assembly step
 

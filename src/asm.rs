@@ -1,6 +1,6 @@
-use crate::types::{Address, Byte};
-use std::collections::HashMap;
+use crate::types::{Address, Byte, TinyError, TinyResult};
 use rand::thread_rng;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct AsmLabel(String);
@@ -86,11 +86,11 @@ impl AsmLabelMap {
         }
     }
 
-    pub fn get(&self, ln: usize, label: &AsmLabel) -> Result<Address, String> {
+    pub fn get(&self, ln: usize, label: &AsmLabel) -> TinyResult<Address> {
         self.inner
             .get(label)
             .copied()
-            .ok_or_else(|| format!("unknown operand at line {ln}: '{}'", label.0))
+            .ok_or_else(|| TinyError::UnknownOperand(ln, label.0.clone()))
     }
 
     pub fn insert(&mut self, label: AsmLabel, address: Address) {
@@ -114,7 +114,7 @@ fn create_symbol_table(map: AsmLabelMap) -> SymbolTable {
 /// # Errors
 ///
 /// Will return `Err` if there was an error
-pub fn assemble(asm: &str) -> Result<(SymbolTable, SourceMap, Vec<Byte>), String> {
+pub fn assemble(asm: &str) -> TinyResult<(SymbolTable, SourceMap, Vec<Byte>)> {
     let lines = asm.lines();
     let parsed_instructions: Result<Vec<_>, _> = lines
         .enumerate()
@@ -126,7 +126,7 @@ pub fn assemble(asm: &str) -> Result<(SymbolTable, SourceMap, Vec<Byte>), String
     Ok((symbol_table, source_map, machine_code))
 }
 
-fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, String> {
+fn line_to_instruction(ln: usize, mut line: &str) -> TinyResult<AsmInstruction> {
     use AsmOperand::{Direct, Immediate};
     line = line.split(';').next().unwrap();
     let split_by_colon: Vec<_> = line.split(':').collect();
@@ -149,7 +149,7 @@ fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, Stri
                 "ret" => AsmOc::Ret,
                 "push" => AsmOc::Push_,
                 "pop" => AsmOc::Pop_,
-                s => return Err(format!("unrecognized opcode at line {ln}: {s}")),
+                s => return Err(TinyError::UnknownOpcode(ln, s.to_owned())),
             },
         });
     } else if opcode_parts.len() >= 2 {
@@ -193,7 +193,7 @@ fn line_to_instruction(ln: usize, mut line: &str) -> Result<AsmInstruction, Stri
                 ),
                 "db" => AsmOc::Db(Byte::new(operand_str.parse().unwrap())),
                 "ds" => AsmOc::Ds(operand_str.parse().unwrap()),
-                s => return Err(format!("unrecognized operand at line {ln}: {s}")),
+                s => return Err(TinyError::UnknownOperand(ln, s.to_owned())),
             },
         });
     }
@@ -236,7 +236,7 @@ fn first_pass(input: &[AsmInstruction]) -> (Vec<AsmOpcode>, AsmLabelMap, SourceM
     (instructions, label_map, source_map)
 }
 
-fn create_machine_code(map: &AsmLabelMap, opcodes: Vec<AsmOpcode>) -> Result<Vec<Byte>, String> {
+fn create_machine_code(map: &AsmLabelMap, opcodes: Vec<AsmOpcode>) -> TinyResult<Vec<Byte>> {
     let mut v = Vec::new();
     for opcode in opcodes {
         opcode_to_machine(&mut v, map, opcode)?;
@@ -245,14 +245,12 @@ fn create_machine_code(map: &AsmLabelMap, opcodes: Vec<AsmOpcode>) -> Result<Vec
 }
 
 fn add_instruction(v: &mut Vec<Byte>, x: i32, o: Address) {
-    v.push(Byte::new(x * 1000 + o.0 as i32));
+    v.push(Byte::new(
+        x.saturating_mul(1000).saturating_add(i32::from(o.0)),
+    ));
 }
 
-fn opcode_to_machine(
-    v: &mut Vec<Byte>,
-    map: &AsmLabelMap,
-    opcode: AsmOpcode,
-) -> Result<(), String> {
+fn opcode_to_machine(v: &mut Vec<Byte>, map: &AsmLabelMap, opcode: AsmOpcode) -> TinyResult<()> {
     use AsmOperand::{Direct, Immediate};
     match opcode.oc {
         AsmOc::Stop => v.push(Byte(0)),
@@ -306,12 +304,7 @@ fn opcode_to_machine(
             }
             v.push(Byte::new(0));
         }
-        x => {
-            return Err(format!(
-                "Do not know how to execute {x:?} at line {}",
-                opcode.ln
-            ))
-        }
+        x => return Err(TinyError::InvalidAssembly(opcode.ln)),
     };
     Ok(())
 }

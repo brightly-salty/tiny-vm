@@ -1,6 +1,45 @@
-use std::fmt;
 use rand::rngs::ThreadRng;
 use rand::Rng;
+use std::fmt;
+
+type Ln = usize;
+
+#[derive(Debug, Clone)]
+pub enum TinyError {
+    UnknownOperand(Ln, String),
+    UnknownOpcode(Ln, String),
+    InvalidAssembly(Ln),
+    InvalidInstruction(String),
+    InvalidAddress(String),
+    InvalidAscii(String),
+    InternalProgramError(String),
+    InputError(String),
+    ArithmeticError(String, char, String),
+}
+
+impl fmt::Display for TinyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::UnknownOperand(ln, operand) => write!(f, "line {ln}: unknown operand {operand}"),
+
+            Self::UnknownOpcode(ln, opcode) => write!(f, "line {ln}: unknown opcode {opcode}"),
+            Self::InvalidAssembly(ln) => {
+                write!(f, "line {ln}: invalid combination of opcode and operand")
+            }
+            Self::InvalidInstruction(s) => write!(f, "byte {s} is invalid as an instruction"),
+            Self::InvalidAddress(s) => write!(f, "byte {s} is invalid as an address"),
+            Self::InvalidAscii(s) => write!(f, "byte {s} is invalid as an ASCII character"),
+            Self::InternalProgramError(s) => write!(f, "internal program error: {s}"),
+            Self::InputError(s) => write!(f, "could not read {s} from stdin"),
+            Self::ArithmeticError(operand1, op, operand2) => write!(
+                f,
+                "arithmetic error when executing {operand1} {op} {operand2}"
+            ),
+        }
+    }
+}
+
+pub type TinyResult<T> = Result<T, TinyError>;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default, Hash)]
 pub struct Address(pub u16); //0-999 (3 decimal digits)
@@ -31,27 +70,27 @@ impl Byte {
     /// # Errors
     ///
     /// Will return `Err` if the byte is not a valid instruction
-    pub fn read_as_instruction(self) -> Result<Instruction, String> {
+    pub fn read_as_instruction(self) -> TinyResult<Instruction> {
         match u32::try_from(self.0) {
             Ok(n) if n < 100_000 => Ok(Instruction {
-                opcode: u8::try_from(n / 1000)
-                    .map(Opcode)
-                    .map_err(|_| format!("Opcode of instruction {n} was invalid"))?,
-                operand: u16::try_from(n % 1000)
-                    .map(Address)
-                    .map_err(|_| format!("Operand of instruction {n} was invalid"))?,
+                opcode: u8::try_from(n / 1000).map(Opcode).map_err(|_| {
+                    TinyError::InternalProgramError(format!("u32 {n} / 1000 could not fit in u8"))
+                })?,
+                operand: u16::try_from(n % 1000).map(Address).map_err(|_| {
+                    TinyError::InternalProgramError(format!("u32 {n} % 1000 could not fit in u16"))
+                })?,
             }),
-            _ => Err(format!("Byte {} could not be read as instruction", self.0)),
+            _ => Err(TinyError::InvalidInstruction(self.to_string())),
         }
     }
 
     /// # Errors
     ///
     /// Will return `Err` if the byte is not a valid address
-    pub fn read_as_address(self) -> Result<Address, String> {
+    pub fn read_as_address(self) -> TinyResult<Address> {
         match u16::try_from(self.0) {
             Ok(n) if n < 1000 => Ok(Address(n)),
-            _ => Err(format!("Byte {} could not be read as address", self.0)),
+            _ => Err(TinyError::InvalidAddress(self.to_string())),
         }
     }
 
@@ -63,10 +102,10 @@ impl Byte {
     /// # Errors
     ///
     /// Will return `Err` if the byte is not a valid ASCII char
-    pub fn read_as_char(self) -> Result<char, String> {
+    pub fn read_as_char(self) -> TinyResult<char> {
         u8::try_from(self.0)
             .map(char::from)
-            .map_err(|_| format!("Byte {} could not be read as ASCII char", self.0))
+            .map_err(|_| TinyError::InvalidAscii(self.to_string()))
     }
 
     #[must_use]
@@ -98,6 +137,10 @@ pub struct Instruction {
 impl Instruction {
     #[must_use]
     pub const fn as_byte(&self) -> Byte {
-        Byte((self.opcode.0 as i32).saturating_mul(1_000).saturating_add(self.operand.0 as i32))
+        Byte(
+            (self.opcode.0 as i32)
+                .saturating_mul(1_000)
+                .saturating_add(self.operand.0 as i32),
+        )
     }
 }

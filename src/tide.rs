@@ -7,7 +7,7 @@ use egui_extras::{Column, TableBuilder};
 use std::collections::HashMap;
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
-use tiny_vm::types::Address;
+use tiny_vm::types::{Address, TinyError, TinyResult};
 
 #[derive(Clone, Copy)]
 enum Focus {
@@ -232,7 +232,7 @@ struct TIDE {
 }
 
 impl TIDE {
-    fn assemble(&mut self) -> Result<(), String> {
+    fn assemble(&mut self) -> TinyResult<()> {
         self.input.clear();
         self.input_ready = false;
         self.output.clear();
@@ -278,8 +278,8 @@ impl TIDE {
         }
     }
 
-    fn focused_error(&mut self, s: &str) {
-        self.error.push_str(s);
+    fn focused_error(&mut self, s: &TinyError) {
+        self.error.push_str(&s.to_string());
         self.focus_redirect = Focus::Errors;
     }
 
@@ -288,14 +288,14 @@ impl TIDE {
         self.focus_redirect = Focus::Output;
     }
 
-    fn run(&mut self) -> Result<(), String> {
+    fn run(&mut self) -> TinyResult<()> {
         self.assemble()?;
         self.running_to_completion = true;
 
         Ok(())
     }
 
-    fn start(&mut self) -> Result<(), String> {
+    fn start(&mut self) -> TinyResult<()> {
         self.assemble()?;
 
         Ok(())
@@ -375,10 +375,10 @@ impl TIDE {
             }
             Ok(out) => self.cpu_state = out,
 
-            Err(s) => {
+            Err(e) => {
                 self.cpu_state = Output::Stopped;
                 self.running_to_completion = false;
-                self.focused_error(&s);
+                self.focused_error(&e);
             }
         };
     }
