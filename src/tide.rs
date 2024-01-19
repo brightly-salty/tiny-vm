@@ -34,6 +34,7 @@ fn text_editor(s: &mut String, enabled: bool, ui: &mut Ui) {
     ui.add_enabled(enabled, |ui: &mut Ui| {
         let output = egui::TextEdit::multiline(s)
             .code_editor()
+            .desired_width(f32::INFINITY)
             .min_size(ui.available_size())
             .show(ui);
 
