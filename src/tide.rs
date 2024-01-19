@@ -30,11 +30,15 @@ struct TINYTabViewer<'a> {
     tide: &'a mut TIDE,
 }
 
-fn text_editor(s: &mut String, ui: &mut Ui) {
-    let output = egui::TextEdit::multiline(s)
-        .code_editor()
-        .min_size(ui.available_size())
-        .show(ui);
+fn text_editor(s: &mut String, enabled: bool, ui: &mut Ui) {
+    ui.add_enabled(enabled, |ui: &mut Ui| {
+        let output = egui::TextEdit::multiline(s)
+            .code_editor()
+            .min_size(ui.available_size())
+            .show(ui);
+
+        output.response
+    });
 }
 
 impl<'a> TabViewer for TINYTabViewer<'a> {
@@ -50,7 +54,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
-                text_editor(&mut self.tide.source, ui);
+                text_editor(&mut self.tide.source, self.tide.cpu.is_none(), ui);
             }
             "Listing" => {
                 let num_rows = 900;
@@ -91,12 +95,18 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                 ui.label(format!("{:03}", index));
                             });
 
-                            row.col(|ui| {
-                                ui.label(format!(
-                                    "{:05}",
-                                    self.tide.cpu.memory[Address::new(index as u16)].0
-                                ));
-                            });
+                            if let Some(cpu) = self.tide.cpu.as_ref() {
+                                row.col(|ui| {
+                                    ui.label(format!(
+                                        "{:05}",
+                                        cpu.memory[Address::new(index as u16)].0
+                                    ));
+                                });
+                            } else {
+                                row.col(|ui| {
+                                    ui.label("?????");
+                                });
+                            }
 
                             row.col(|ui| {
                                 ui.label(source_line.unwrap_or("<empty>"));
@@ -108,33 +118,32 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 ui.label("exec");
             }
             "Memory" => {
-                ui.with_layout(
-                    egui::Layout::top_down(egui::Align::Min)
-                        .with_main_wrap(true)
-                        .with_cross_justify(false),
-                    |ui| {
-                        for (addr, value, chr) in (0..900).map(|a| {
-                            (
-                                a,
-                                self.tide.cpu.memory[Address(a)],
-                                self.tide.cpu.memory[Address(a)]
-                                    .read_as_char()
-                                    .unwrap_or(' '),
-                            )
-                        }) {
-                            ui.monospace(format!(
-                                "{:03}  {:05} {}  ",
-                                addr,
-                                value,
-                                if chr.is_ascii() { chr } else { ' ' }
-                            ));
+                if let Some(cpu) = self.tide.cpu.as_ref() {
+                    for (addr, value, chr) in (0..900).map(|a| {
+                        (
+                            a,
+                            cpu.memory[Address(a)],
+                            cpu.memory[Address(a)].read_as_char().unwrap_or(' '),
+                        )
+                    }) {
+                        ui.monospace(format!(
+                            "{:03}  {:05} {}  ",
+                            addr,
+                            value,
+                            if chr.is_ascii() { chr } else { ' ' }
+                        ));
 
+                        ui.end_row();
+                    }
+                } else {
+                    ui.add_enabled_ui(false, |ui| {
+                        for addr in 0..900 {
+                            ui.monospace(format!("{:03}  ?????    ", addr,));
                             ui.end_row();
                         }
-                    },
-                );
+                    });
+                }
             }
-
             "Assembly Errors" => {
                 ui.add_sized(
                     ui.available_size(),
@@ -166,38 +175,68 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 });
             }
             "Registers" => {
-                egui::Grid::new(1).show(ui, |ui| {
-                    ui.label("Accumulator");
-                    ui.monospace(format!("{}", self.tide.cpu.alu.acc));
-                    ui.end_row();
+                ui.add_enabled_ui(self.tide.cpu.is_some(), |ui| {
+                    egui::Grid::new(1).show(ui, |ui| match &self.tide.cpu {
+                        Some(cpu) => {
+                            ui.label("Accumulator");
+                            ui.monospace(format!("{}", cpu.alu.acc));
+                            ui.end_row();
 
-                    ui.label("Instruction Pointer");
-                    ui.monospace(format!("{}", self.tide.cpu.cu.ip));
-                    ui.end_row();
+                            ui.label("Instruction Pointer");
+                            ui.monospace(format!("{}", cpu.cu.ip));
+                            ui.end_row();
 
-                    ui.label("Stack Pointer");
-                    ui.monospace(format!("{}", self.tide.cpu.alu.sp));
-                    ui.end_row();
+                            ui.label("Stack Pointer");
+                            ui.monospace(format!("{}", cpu.alu.sp));
+                            ui.end_row();
 
-                    ui.label("Base Pointer");
-                    ui.monospace(format!("{}", self.tide.cpu.alu.bp));
-                    ui.end_row();
+                            ui.label("Base Pointer");
+                            ui.monospace(format!("{}", cpu.alu.bp));
+                            ui.end_row();
 
-                    ui.label("Instruction Register");
-                    ui.monospace(format!("{}", self.tide.cpu.cu.ir.as_byte()));
+                            ui.label("Instruction Register");
+                            ui.monospace(format!("{}", cpu.cu.ir.as_byte()));
 
-                    ui.end_row();
+                            ui.end_row();
+                        }
+                        None => {
+                            ui.label("Accumulator");
+                            ui.monospace("?????");
+                            ui.end_row();
+
+                            ui.label("Instruction Pointer");
+                            ui.monospace("???");
+                            ui.end_row();
+
+                            ui.label("Stack Pointer");
+                            ui.monospace("???");
+                            ui.end_row();
+
+                            ui.label("Base Pointer");
+                            ui.monospace("???");
+                            ui.end_row();
+
+                            ui.label("Instruction Register");
+                            ui.monospace("?????");
+
+                            ui.end_row();
+                        }
+                    });
                 });
             }
             "Stack" => {
-                for byte in self.tide.cpu.get_stack() {
-                    ui.monospace(byte.to_string());
+                if let Some(cpu) = &self.tide.cpu {
+                    for byte in cpu.get_stack() {
+                        ui.monospace(byte.to_string());
+                    }
                 }
             }
             "Symbols" => {
-                for address in self.tide.symbols.keys() {
-                    ui.monospace(format!("{:03}   {}", address, self.tide.symbols[address]));
-                }
+                ui.add_enabled_ui(self.tide.cpu.is_some(), |ui| {
+                    for address in self.tide.symbols.keys() {
+                        ui.monospace(format!("{:03}   {}", address, self.tide.symbols[address]));
+                    }
+                });
             }
 
             _ => {
@@ -217,8 +256,8 @@ struct TIDE {
     symbols: BTreeMap<Address, String>, // Symbols
     source_map: HashMap<Address, usize>,
     breakpoints: Vec<u16>, // Indices of lines
-    cpu: Cpu,
-    cpu_state: Output,
+    cpu: Option<Cpu>,
+    cpu_state: Option<Output>,
     running_to_completion: bool,
 
     focus_redirect: Focus,
@@ -239,13 +278,13 @@ impl TIDE {
         self.input_ready = false;
         self.output.clear();
         self.error.clear();
-        self.cpu = Cpu::new();
+        self.cpu = Some(Cpu::new());
 
         let result = assemble(&self.source)?;
         self.symbols = result.0;
         self.source_map = result.1;
-        self.cpu.set_memory(&result.2);
-        self.cpu_state = Output::ReadyToCycle;
+        self.cpu.as_mut().unwrap().set_memory(&result.2);
+        self.cpu_state = Some(Output::ReadyToCycle);
 
         Ok(())
     }
@@ -303,13 +342,31 @@ impl TIDE {
         Ok(())
     }
 
-    fn stop(&mut self) {}
+    fn stop(&mut self) {
+        self.running_to_completion = false;
+        self.cpu.take();
+        self.cpu_state.take();
+        self.source_map.clear();
+        self.symbols.clear();
+    }
 
     fn step(&mut self) {
-        let result = match self.cpu_state {
+        let cpu = if let Some(cpu) = self.cpu.as_mut() {
+            cpu
+        } else {
+            return;
+        };
+
+        let cpu_state = if let Some(cpu_state) = self.cpu_state.as_mut() {
+            cpu_state
+        } else {
+            return;
+        };
+
+        let result = match cpu_state {
             Output::WaitingForString => {
                 if self.input_ready {
-                    let result = self.cpu.step(Input::String(self.input.clone()));
+                    let result = cpu.step(Input::String(self.input.clone()));
                     self.output.push_str(&self.input);
                     self.output.push('\n');
                     self.input.clear();
@@ -322,7 +379,7 @@ impl TIDE {
             Output::WaitingForChar => {
                 if self.input_ready && self.input.len() == 1 {
                     let c = self.input.pop().unwrap();
-                    let result = self.cpu.step(Input::Char(c));
+                    let result = cpu.step(Input::Char(c));
                     self.output.push(c);
                     self.output.push('\n');
                     self.input_ready = false;
@@ -335,7 +392,7 @@ impl TIDE {
                 if self.input_ready {
                     match self.input.parse() {
                         Ok(i) => {
-                            let result = self.cpu.step(Input::Integer(i));
+                            let result = cpu.step(Input::Integer(i));
                             self.output.push_str(&self.input);
                             self.output.push('\n');
                             self.input.clear();
@@ -348,7 +405,7 @@ impl TIDE {
                     return;
                 }
             }
-            Output::ReadyToCycle => self.cpu.step(Input::None),
+            Output::ReadyToCycle => cpu.step(Input::None),
 
             _ => {
                 // TODO
@@ -358,16 +415,16 @@ impl TIDE {
 
         match result {
             Ok(Output::Char(c)) => {
-                self.cpu_state = Output::ReadyToCycle;
+                *cpu_state = Output::ReadyToCycle;
                 self.output.push(c);
                 self.focus_redirect = Focus::Output;
             }
             Ok(Output::String(ref s)) => {
-                self.cpu_state = Output::ReadyToCycle;
+                *cpu_state = Output::ReadyToCycle;
                 self.focused_output(s);
             }
             Ok(ref out @ Output::Stopped) => {
-                self.cpu_state = out.clone();
+                *cpu_state = out.clone();
                 self.running_to_completion = false;
                 self.error.push_str("Completed");
             }
@@ -377,12 +434,12 @@ impl TIDE {
                 | ref out @ Output::WaitingForInteger,
             ) => {
                 self.focus_redirect = Focus::Input;
-                self.cpu_state = out.clone();
+                *cpu_state = out.clone();
             }
-            Ok(out) => self.cpu_state = out,
+            Ok(out) => *cpu_state = out,
 
             Err(e) => {
-                self.cpu_state = Output::Stopped;
+                *cpu_state = Output::Stopped;
                 self.running_to_completion = false;
                 self.focused_error(&e);
             }
@@ -431,8 +488,8 @@ impl Default for TIDE {
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
-            cpu: Cpu::new(),
-            cpu_state: Output::Stopped,
+            cpu: None,
+            cpu_state: None,
             running_to_completion: false,
 
             focus_redirect: Focus::None,
