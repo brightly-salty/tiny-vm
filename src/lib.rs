@@ -10,7 +10,6 @@
     clippy::arithmetic_side_effects,
     clippy::format_push_string,
     clippy::if_then_some_else_none,
-    clippy::missing_asserts_for_indexing,
     clippy::redundant_type_annotations,
     clippy::unwrap_in_result
 )]

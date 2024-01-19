@@ -9,11 +9,13 @@ pub enum TinyError {
     UnknownOperand(Ln, String),
     UnknownOpcode(Ln, String),
     InvalidAssembly(Ln),
+    InvalidOperand(Ln, String, String),
     InvalidInstruction(String),
     InvalidAddress(String),
     InvalidAscii(String),
     InternalProgramError(String),
     InputError(String),
+    OutputError,
     ArithmeticError(String, char, String),
 }
 
@@ -21,6 +23,10 @@ impl fmt::Display for TinyError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::UnknownOperand(ln, operand) => write!(f, "line {ln}: unknown operand {operand}"),
+            Self::InvalidOperand(ln, opcode, operand) => write!(
+                f,
+                "line {ln}: invalid operand {operand} for opcode {opcode}"
+            ),
 
             Self::UnknownOpcode(ln, opcode) => write!(f, "line {ln}: unknown opcode {opcode}"),
             Self::InvalidAssembly(ln) => {
@@ -31,6 +37,7 @@ impl fmt::Display for TinyError {
             Self::InvalidAscii(s) => write!(f, "byte {s} is invalid as an ASCII character"),
             Self::InternalProgramError(s) => write!(f, "internal program error: {s}"),
             Self::InputError(s) => write!(f, "could not read {s} from stdin"),
+            Self::OutputError => write!(f, "could not output to stdout"),
             Self::ArithmeticError(operand1, op, operand2) => write!(
                 f,
                 "arithmetic error when executing {operand1} {op} {operand2}"

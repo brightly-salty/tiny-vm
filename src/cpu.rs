@@ -1,5 +1,5 @@
 use crate::types::{Address, Byte, Instruction, TinyError, TinyResult};
-use std::io::Read;
+use std::io::{Write, Read};
 use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Copy)]
@@ -107,6 +107,9 @@ impl Cpu {
     /// # Errors
     ///
     /// Will return `Err` if there was an unrecoverable error while running the CPU    
+    /// # Panics
+    ///
+    /// Will panic if stdout cannot be flushed
     pub fn run(&mut self) -> TinyResult<()> {
         let mut input = Input::None;
         loop {
@@ -139,10 +142,12 @@ impl Cpu {
                 }
                 Output::Char(c) => {
                     print!("{c}");
+                    std::io::stdout().flush().map_err(|_| TinyError::OutputError)?;
                     input = Input::None;
                 }
                 Output::String(s) => {
-                    println!("{s}");
+                    print!("{s}");
+                    std::io::stdout().flush().map_err(|_| TinyError::OutputError)?;
                     input = Input::None;
                 }
                 Output::ReadyToCycle => {
