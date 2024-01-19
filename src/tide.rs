@@ -30,12 +30,38 @@ struct TINYTabViewer<'a> {
     tide: &'a mut TIDE,
 }
 
-fn text_editor(s: &mut String, enabled: bool, ui: &mut Ui) {
+fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) {
     ui.add_enabled(enabled, |ui: &mut Ui| {
         let output = egui::TextEdit::multiline(s)
             .code_editor()
             .desired_width(f32::INFINITY)
             .min_size(ui.available_size())
+            .layouter(&mut |ui, string, wrap_width| {
+                let mut layout_job = egui::text::LayoutJob::default();
+
+                layout_job.wrap.max_width = f32::INFINITY;
+
+                let default_text_format = egui::text::TextFormat {
+                    font_id: egui::FontId::monospace(15.0),
+                    ..Default::default()
+                };
+                let executing_text_format = egui::text::TextFormat {
+                    font_id: default_text_format.font_id.clone(),
+                    color: egui::Color32::BLUE,
+                    ..Default::default()
+                };
+
+                for (i, line) in string.split_inclusive('\n').enumerate() {
+                    match executing_line {
+                        Some(l) if l == i => {
+                            layout_job.append(line, 0.0, executing_text_format.clone())
+                        }
+                        _ => layout_job.append(line, 0.0, default_text_format.clone()),
+                    }
+                }
+
+                ui.fonts(|f| f.layout_job(layout_job))
+            })
             .show(ui);
 
         output.response
@@ -55,7 +81,16 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
-                text_editor(&mut self.tide.source, self.tide.cpu.is_none(), ui);
+                text_editor(
+                    &mut self.tide.source,
+                    self.tide.cpu.is_none(),
+                    self.tide
+                        .cpu
+                        .as_ref()
+                        .and_then(|cpu| self.tide.source_map.get(&cpu.cu.ip))
+                        .copied(),
+                    ui,
+                );
             }
             "Listing" => {
                 let num_rows = 900;
