@@ -177,6 +177,11 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         Some(cpu) => {
                             ui.label("Accumulator");
                             ui.monospace(format!("{}", cpu.alu.acc));
+
+                            if ui.button("Edit").clicked() {
+                                todo!();
+                            }
+
                             ui.end_row();
 
                             ui.label("Instruction Pointer");
@@ -199,6 +204,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         None => {
                             ui.label("Accumulator");
                             ui.monospace("?????");
+                            ui.button("Edit");
                             ui.end_row();
 
                             ui.label("Instruction Pointer");
