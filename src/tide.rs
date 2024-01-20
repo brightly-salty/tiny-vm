@@ -31,6 +31,44 @@ struct TINYTabViewer<'a> {
 }
 
 fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) {
+    let rightmost_comment_position = (s
+        .split('\n')
+        .map(|line| match line.split_once(';') {
+            Some((a, _)) => a.trim_end().len(),
+            None => line.trim_end().len(),
+        })
+        .max()
+        .unwrap_or(1)
+        + 4)
+        / 4
+        * 4;
+
+    s.replace_range(
+        ..,
+        &s.split_inclusive('\n')
+            .map(|line| match line.split_once(';') {
+                Some((asm, comment)) => {
+                    let mut output = String::new();
+                    let asm = asm.trim_end_matches(' ');
+
+                    if asm.len() != 0 && comment.len() != 0 {
+                        output.push_str(asm);
+                        output.push_str(&" ".repeat(rightmost_comment_position - asm.len()));
+                        output.push(';');
+                        output.push_str(comment);
+                        output
+                    } else {
+                        output.push_str(line);
+                        output
+                    }
+                }
+                None => line.into(),
+            })
+            .collect::<String>(),
+    );
+
+    // TODO: Cursor repositioning when we mess with indents
+
     ui.add_enabled(enabled, |ui: &mut Ui| {
         let output = egui::TextEdit::multiline(s)
             .code_editor()
