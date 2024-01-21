@@ -51,7 +51,6 @@ type LabelMap = HashMap<String, Address>;
 /// Will return `Err` if assembly was invalid
 pub fn assemble(asm: &str) -> TinyResult<(SymbolTable, SourceMap, Vec<Byte>)> {
     let mut opcodes = Vec::with_capacity(asm.lines().count());
-    let mut stored_label = None;
     let mut map = HashMap::with_capacity(asm.lines().count());
     let mut source_map = HashMap::with_capacity(asm.lines().count());
     let mut symbols = BTreeMap::new();
@@ -62,13 +61,9 @@ pub fn assemble(asm: &str) -> TinyResult<(SymbolTable, SourceMap, Vec<Byte>)> {
     let mut address = Address(0);
     for (ln, line) in asm.lines().enumerate() {
         let (label, opcode_parts) = parse(line);
-        if let Some(l) = label.or_else(|| stored_label.take()) {
-            if opcode_parts.is_empty() {
-                stored_label = Some(l);
-            } else {
-                map.insert(l.clone(), address);
-                symbols.insert(address, l);
-            }
+        if let Some(l) = label {
+            map.insert(l.clone(), address);
+            symbols.insert(address, l);
         }
         if !opcode_parts.is_empty() {
             let (len, opcode) = parse_opcode(ln, &opcode_parts)?;
@@ -126,14 +121,14 @@ fn get_map(map: &LabelMap, ln: usize, label: &str) -> TinyResult<Address> {
 }
 
 fn parse(line: &str) -> (Option<String>, Vec<String>) {
-    let line = if let Some((new_line, _)) = line.to_ascii_lowercase().split_once(';') {
-        new_line.to_owned()
+    let line = if let Some((new_line, _)) = line.split_once(';') {
+        new_line
     } else {
-        line.to_ascii_lowercase()
+        line
     };
     if let Some((label, rest)) = line.split_once(':') {
         (
-            Some(label.trim().to_owned()),
+            Some(label.trim().to_ascii_lowercase()),
             rest.split_whitespace().map(ToOwned::to_owned).collect(),
         )
     } else {
@@ -149,7 +144,7 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
     let opcode = if opcode_parts.len() == 1 {
         Line {
             ln,
-            oc: Instruction::Easy(vec![Byte(match opcode_parts[0].as_str() {
+            oc: Instruction::Easy(vec![Byte(match opcode_parts[0].to_ascii_lowercase().as_str() {
                 "stop" => 0,
                 "in" => 10_000,
                 "out" => 11_000,
@@ -164,7 +159,7 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
         Line {
             ln,
             oc: if let Ok(imm) = operand_str.parse::<u16>().map(Address) {
-                Instruction::Easy(match opcode_parts[0].as_str() {
+                Instruction::Easy(match opcode_parts[0].to_ascii_lowercase().as_str() {
                     "ld" => vec![instruction(91, imm)],
                     "add" => vec![instruction(96, imm)],
                     "sub" => vec![instruction(97, imm)],
@@ -195,9 +190,9 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
                     }
                 })
             } else {
-                let operand = operand_str.to_owned();
+                let operand = operand_str.to_ascii_lowercase();
 
-                match opcode_parts[0].as_str() {
+                match opcode_parts[0].to_ascii_lowercase().as_str() {
                     "ld" => Instruction::Hard(Opcode::Ld, operand),
                     "ldi" => Instruction::Hard(Opcode::Ldi, operand),
                     "lda" => Instruction::Hard(Opcode::Lda, operand),
@@ -211,7 +206,7 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
                     "jg" => Instruction::Hard(Opcode::Jg, operand),
                     "jl" => Instruction::Hard(Opcode::Jl, operand),
                     "je" => Instruction::Hard(Opcode::Je, operand),
-                    "call" => match operand_str.as_str() {
+                    "call" => match operand_str.to_ascii_lowercase().as_str() {
                         "printinteger" => Instruction::Easy(vec![Byte(16900)]),
                         "printstring" => Instruction::Easy(vec![Byte(16925)]),
                         "inputinteger" => Instruction::Easy(vec![Byte(16950)]),
