@@ -259,7 +259,7 @@ impl Cpu {
                 }
             }
             14 => {
-                if self.alu.acc.0 < 1 {
+                if self.alu.acc.0 < 0 {
                     self.jump_to(adr);
                 }
             }
@@ -269,7 +269,9 @@ impl Cpu {
                 }
             }
             16 => match self.cu.ir.operand {
-                Address(900) => return Ok(Output::String(self.alu.acc.0.to_string())),
+                Address(900) => {
+                    return Ok(Output::String(self.alu.acc.0.to_string()))
+                },
                 Address(925) => {
                     let mut address = self.alu.acc.read_as_address()?;
                     let mut buffer = String::new();
@@ -327,7 +329,7 @@ impl Cpu {
                 }
             }
             22 => {
-                if self.alu.acc.0 <= 1 {
+                if self.alu.acc.0 <= 0 {
                     self.jump_to(adr);
                 }
             }
