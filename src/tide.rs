@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
+use wasm_bindgen::prelude::*;
 
 #[derive(Clone, Copy)]
 enum Focus {
@@ -17,13 +18,32 @@ enum Focus {
     Output,
 }
 
+// Native
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
 
-    eframe::run_native("TIDE", options, Box::new(|cc| Box::<TIDE>::default()))
+    eframe::run_native("TIDE", options, Box::new(|_| Box::<TIDE>::default()))
+}
+
+// Web
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        eframe::WebRunner::new()
+            .start(
+                "the_canvas_id", // hardcode it
+                web_options,
+                Box::new(|cc| Box::<TIDE>::default()),
+            )
+            .await
+            .expect("failed to start eframe");
+    });
 }
 
 struct TINYTabViewer<'a> {
@@ -154,7 +174,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             ui.separator();
                         });
                     })
-                    .body(|mut body| {
+                    .body(|body| {
                         body.rows(15.0, num_rows, |mut row| {
                             let index = row.index();
 
@@ -277,7 +297,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         None => {
                             ui.label("Accumulator");
                             ui.monospace("?????");
-                            ui.button("Edit");
+                            _ = ui.button("Edit");
                             ui.end_row();
 
                             ui.label("Instruction Pointer");
@@ -346,6 +366,8 @@ struct TIDE {
     error: String,
 
     dock_state: DockState<String>,
+
+    about_window_open: bool,
 }
 
 impl TIDE {
@@ -528,12 +550,12 @@ impl TIDE {
     }
 
     fn step_into(&mut self) {
-        todo!();
+        //todo!();
         //self.cpu.step_into();
     }
 
     fn toggle_breakpoint(&mut self) {
-        todo!();
+        //todo!();
     }
 }
 
@@ -545,7 +567,7 @@ impl Default for TIDE {
             .collect();
 
         let mut dock_state = DockState::new(tabs);
-        let mut root = dock_state.main_surface_mut();
+        let root = dock_state.main_surface_mut();
 
         // Add bottom panel
         let [old_node, _] = root.split_below(
@@ -578,6 +600,8 @@ impl Default for TIDE {
             error: String::new(),
 
             dock_state,
+
+            about_window_open: false,
         }
     }
 }
@@ -608,6 +632,44 @@ const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
 impl eframe::App for TIDE {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.about_window_open {
+                egui::Window::new("About")
+                    .auto_sized()
+                    .open(&mut self.about_window_open)
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new("Tiny Integrated Development Environment")
+                                .size(30.0),
+                        );
+                        ui.label(""); // For spacing
+
+                        egui::Grid::new(6).show(ui, |ui| {
+                            ui.label("Designed By:");
+                            ui.label("Dr. Steve Baber");
+                            ui.end_row();
+
+                            ui.label("");
+                            ui.label("Dr. Tim Baird");
+                            ui.end_row();
+                            ui.label("");
+                            ui.end_row();
+
+                            ui.label("Implemented By:");
+                            ui.label("Caden Haustein");
+                            ui.end_row();
+
+                            ui.label("");
+                            ui.label("Nathaniel Kinonen");
+                            ui.end_row();
+                            ui.label("");
+                            ui.end_row();
+
+                            ui.label("Originally Implemented By:");
+                            ui.label("Dana Steil");
+                        })
+                    });
+            }
+
             // Ordering is important for stop/run/start because they *consume* shortcuts; longest
             // shortcuts should be checked first when the same logical key is used with
             // different modifiers
@@ -620,7 +682,7 @@ impl eframe::App for TIDE {
             let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
 
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
+                /*ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
                         TIDE::manage_file_result(self.new_file());
                     }
@@ -663,6 +725,7 @@ impl eframe::App for TIDE {
                         todo!();
                     }
                 });
+                */
 
                 ui.menu_button("Build", |ui| {
                     if ui.button("Assemble").clicked()
@@ -688,8 +751,12 @@ impl eframe::App for TIDE {
                 });
 
                 ui.menu_button("Help", |ui| {
-                    if ui.button("TINY Overview").clicked() {
+                    /*if ui.button("TINY Overview").clicked() {
                         todo!();
+                    }*/
+
+                    if ui.button("About").clicked() {
+                        self.about_window_open = true;
                     }
                 });
             });
@@ -768,7 +835,7 @@ impl eframe::App for TIDE {
                             self.step()
                         }
                         (Some(Output::WaitingForChar), s) if s.len() == 1 => self.step(),
-                        (Some(Output::WaitingForString), s) => self.step(),
+                        (Some(Output::WaitingForString), _) => self.step(),
                         _ => {}
                     }
                 }
