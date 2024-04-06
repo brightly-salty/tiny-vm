@@ -22,6 +22,7 @@ wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4.42"
 
 getrandom = { version = "0.2", features = ["js"] }
+serde = "1.0.197"
 
 [[bin]]
 name = "tiny-vm"

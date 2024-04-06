@@ -4,14 +4,16 @@ use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
 use wasm_bindgen::prelude::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum Focus {
+    #[default]
     None,
     Errors,
     Input,
@@ -26,7 +28,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
 
-    eframe::run_native("TIDE", options, Box::new(|_| Box::<TIDE>::default()))
+    eframe::run_native("TIDE", options, Box::new(|cc| Box::new(TIDE::new(cc))))
 }
 
 // Web
@@ -39,7 +41,7 @@ fn main() {
             .start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|cc| Box::<TIDE>::default()),
+                Box::new(|cc| Box::new(TIDE::new(cc))),
             )
             .await
             .expect("failed to start eframe");
@@ -272,7 +274,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             ui.monospace(format!("{}", cpu.alu.acc));
 
                             if ui.button("Edit").clicked() {
-                                todo!();
+                                //todo!();
                             }
 
                             ui.end_row();
@@ -346,28 +348,65 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct TIDE {
     source: String,
+    #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
+    #[serde(skip)]
     source_map: HashMap<Address, usize>,
+    #[serde(skip)]
     breakpoints: Vec<u16>, // Indices of lines
+    #[serde(skip)]
     cpu: Option<Cpu>,
+    #[serde(skip)]
     cpu_state: Option<Output>,
+    #[serde(skip)]
     running_to_completion: bool,
 
+    #[serde(skip)]
     focus_redirect: Focus,
 
+    #[serde(skip)]
     input: String,
+    #[serde(skip)]
     input_ready: bool,
 
+    #[serde(skip)]
     output: String,
 
+    #[serde(skip)]
     error: String,
 
+    #[serde(skip, default = "default_dock_state")]
     dock_state: DockState<String>,
 
+    #[serde(skip)]
     about_window_open: bool,
+}
+
+fn default_dock_state() -> DockState<String> {
+    let tabs = ["Source", "Listing", "Executable", "Memory"]
+        .map(str::to_string)
+        .into_iter()
+        .collect();
+
+    let mut dock_state = DockState::new(tabs);
+    let root = dock_state.main_surface_mut();
+
+    // Add bottom panel
+    let [old_node, _] = root.split_below(
+        NodeIndex::root(),
+        0.8,
+        vec!["Assembly Errors".to_string(), "Input/Output".to_string()],
+    );
+
+    // Add side panel
+    let [_, side_panel] = root.split_right(old_node, 0.8, vec!["Registers".to_string()]);
+    let [_, side_panel] = root.split_below(side_panel, 1.0 / 3.0, vec!["Stack".to_string()]);
+    root.split_below(side_panel, 0.5, vec!["Symbols".to_string()]);
+
+    dock_state
 }
 
 impl TIDE {
@@ -557,29 +596,19 @@ impl TIDE {
     fn toggle_breakpoint(&mut self) {
         //todo!();
     }
+
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        if let Some(storage) = cc.storage {
+            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        }
+
+        Default::default()
+    }
 }
 
 impl Default for TIDE {
     fn default() -> Self {
-        let tabs = ["Source", "Listing", "Executable", "Memory"]
-            .map(str::to_string)
-            .into_iter()
-            .collect();
-
-        let mut dock_state = DockState::new(tabs);
-        let root = dock_state.main_surface_mut();
-
-        // Add bottom panel
-        let [old_node, _] = root.split_below(
-            NodeIndex::root(),
-            0.8,
-            vec!["Assembly Errors".to_string(), "Input/Output".to_string()],
-        );
-
-        // Add side panel
-        let [_, side_panel] = root.split_right(old_node, 0.8, vec!["Registers".to_string()]);
-        let [_, side_panel] = root.split_below(side_panel, 1.0 / 3.0, vec!["Stack".to_string()]);
-        root.split_below(side_panel, 0.5, vec!["Symbols".to_string()]);
+        let dock_state = default_dock_state();
 
         Self {
             source: String::new(),
@@ -630,6 +659,10 @@ const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F9);
 
 impl eframe::App for TIDE {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.about_window_open {
@@ -746,8 +779,6 @@ impl eframe::App for TIDE {
                     step_over_pressed |= ui.button("Step Over").clicked();
                     step_into_pressed |= ui.button("Step Into").clicked();
                     breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked();
-
-                    ui.separator();
                 });
 
                 ui.menu_button("Help", |ui| {
