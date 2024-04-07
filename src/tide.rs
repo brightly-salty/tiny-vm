@@ -1,15 +1,35 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use anyhow::{anyhow, Result};
 use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
+use pollster::block_on;
+use rfd::{
+    AsyncFileDialog, AsyncMessageDialog, FileHandle, MessageButtons, MessageDialogResult,
+    MessageLevel,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
+use std::path::PathBuf;
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
-use wasm_bindgen::prelude::*;
+
+enum OpenFileResult {
+    Opened(String),
+    Cancelled,
+    Fail,
+}
+
+enum SaveFileResult {
+    Saved(Option<PathBuf>),
+    UnsavedContinuing,
+    UnsavedCancelled,
+    Fail,
+}
 
 #[derive(Clone, Copy, Default)]
 enum Focus {
@@ -24,7 +44,6 @@ enum Focus {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
 
@@ -52,7 +71,7 @@ struct TINYTabViewer<'a> {
     tide: &'a mut TIDE,
 }
 
-fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) {
+fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) -> bool {
     let rightmost_comment_position = (s
         .split('\n')
         .map(|line| match line.split_once(';') {
@@ -90,6 +109,9 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
     );
 
     // TODO: Cursor repositioning when we mess with indents
+    // TODO: Toggle for automatic indent handling
+
+    let mut changed = false;
 
     ui.add_enabled(enabled, |ui: &mut Ui| {
         let output = egui::TextEdit::multiline(s)
@@ -124,8 +146,12 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
             })
             .show(ui);
 
+        changed = output.response.changed();
+
         output.response
     });
+
+    return changed;
 }
 
 impl<'a> TabViewer for TINYTabViewer<'a> {
@@ -141,7 +167,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
-                text_editor(
+                if text_editor(
                     &mut self.tide.source,
                     self.tide.cpu.is_none(),
                     self.tide
@@ -150,7 +176,9 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .and_then(|cpu| self.tide.source_map.get(&cpu.cu.ip))
                         .copied(),
                     ui,
-                );
+                ) {
+                    self.tide.unsaved = true;
+                };
             }
             "Listing" => {
                 let num_rows = 900;
@@ -211,7 +239,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     })
             }
             "Executable" => {
-                ui.label("exec");
+                ui.label("TODO");
             }
             "Memory" => {
                 if let Some(cpu) = self.tide.cpu.as_ref() {
@@ -351,12 +379,14 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 #[derive(Clone, Serialize, Deserialize)]
 struct TIDE {
     source: String,
+    unsaved: bool,
+    save_path: Option<PathBuf>,
     #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
     source_map: HashMap<Address, usize>,
     #[serde(skip)]
-    breakpoints: Vec<u16>, // Indices of lines
+    breakpoints: Vec<u16>, // Indices of lines (TODO)
     #[serde(skip)]
     cpu: Option<Cpu>,
     #[serde(skip)]
@@ -409,6 +439,16 @@ fn default_dock_state() -> DockState<String> {
     dock_state
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
+    Some(handle.path().to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
+    None
+}
+
 impl TIDE {
     fn assemble(&mut self) -> TinyResult<()> {
         self.input.clear();
@@ -426,32 +466,145 @@ impl TIDE {
         Ok(())
     }
 
-    fn new_file(&mut self) -> Result<(), String> {
-        // TODO: Err if we need to save this file first
-        todo!();
+    async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+        match AsyncMessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("Save changes before closing?")
+            .set_description("Unsaved changes will be lost")
+            .set_buttons(MessageButtons::YesNoCancel)
+            .show()
+            .await
+        {
+            MessageDialogResult::Yes => TIDE::save_file(save_path, source).await,
+            MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
+            _ => SaveFileResult::UnsavedCancelled,
+        }
     }
 
-    fn open_file(&mut self) -> Result<(), String> {
-        // TODO: Err if we need to save this file first
-        todo!();
+    fn reset(&mut self) {
+        self.source.clear();
+        self.unsaved = true;
+        self.save_path = None;
+        self.symbols.clear();
+        self.source_map.clear();
+        self.breakpoints.clear();
+        self.cpu = None;
+        self.cpu_state = None;
+        self.running_to_completion = false;
+        self.focus_redirect = Focus::None;
+        self.input.clear();
+        self.input_ready = false;
+        self.output.clear();
+        self.error.clear();
     }
 
-    fn save_file(&mut self) -> Result<(), String> {
-        todo!();
-    }
-
-    fn save_file_as(&mut self) -> Result<(), String> {
-        todo!();
-    }
-
-    fn manage_file_result(result: Result<(), String>) {
-        match result {
-            Ok(_) => {} // Happy case; file should be open and ready to edit
-            Err(s) if s == "Close without saving?" => {
-                todo!(); // TODO: Show dialog for this
+    async fn new_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> bool {
+        if unsaved {
+            match TIDE::handle_unsaved(save_path, source).await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => return false,
+                _ => {}
             }
-            _ => {
-                todo!(); // TODO: Show separate dialog for file creation errors, etc.
+        }
+
+        return true;
+    }
+
+    async fn open_file(
+        save_path: Option<PathBuf>,
+        source: String,
+        unsaved: bool,
+    ) -> OpenFileResult {
+        if unsaved {
+            match TIDE::handle_unsaved(save_path, source).await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return OpenFileResult::Cancelled
+                }
+                _ => {}
+            }
+        }
+
+        let contents = match AsyncFileDialog::new()
+            .set_title("Open file")
+            .add_filter("tiny", &["tny"])
+            .pick_file()
+            .await
+        {
+            Some(handle) => {
+                let bytes = handle.read().await;
+                std::str::from_utf8(&bytes)
+                    .map(|s| s.to_owned())
+                    .map_err(|e| e.into())
+            }
+            None => Err(anyhow!("Unable to open file")),
+        };
+
+        match contents {
+            Ok(s) => OpenFileResult::Opened(s),
+            Err(e) => {
+                AsyncMessageDialog::new()
+                    .set_level(MessageLevel::Error)
+                    .set_title("Unable to open file")
+                    .set_description(e.to_string())
+                    .set_buttons(MessageButtons::Ok)
+                    .show()
+                    .await;
+                OpenFileResult::Fail
+            }
+        }
+    }
+
+    async fn save_file(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+        let result = match save_path.as_ref() {
+            Some(path) => fs::write(path, source.as_bytes()),
+            None => {
+                return TIDE::save_file_as(source).await;
+            }
+        };
+
+        match result {
+            Ok(_) => SaveFileResult::Saved(save_path),
+            Err(_) => {
+                AsyncMessageDialog::new()
+                    .set_level(MessageLevel::Error)
+                    .set_title("Unable to save file")
+                    .set_description("Could not save file")
+                    .set_buttons(MessageButtons::Ok)
+                    .show()
+                    .await;
+                SaveFileResult::Fail
+            }
+        }
+    }
+
+    async fn save_file_as(source: String) -> SaveFileResult {
+        let save_path;
+
+        let result = match AsyncFileDialog::new()
+            .set_title("Save file")
+            .add_filter("tiny", &["tny"])
+            .save_file()
+            .await
+        {
+            Some(handle) => {
+                save_path = maybe_file_path(&handle);
+                handle.write(source.as_bytes()).await.map_err(|e| e)
+            }
+            None => {
+                return SaveFileResult::UnsavedCancelled;
+            }
+        };
+
+        match result {
+            Ok(_) => SaveFileResult::Saved(save_path),
+            Err(_) => {
+                AsyncMessageDialog::new()
+                    .set_level(MessageLevel::Error)
+                    .set_title("Unable to save file")
+                    .set_description("Could not save file")
+                    .set_buttons(MessageButtons::Ok)
+                    .show()
+                    .await;
+                SaveFileResult::Fail
             }
         }
     }
@@ -584,7 +737,7 @@ impl TIDE {
     }
 
     fn step_over(&mut self) {
-        todo!();
+        //todo!();
         //self.cpu.step_over();
     }
 
@@ -612,6 +765,8 @@ impl Default for TIDE {
 
         Self {
             source: String::new(),
+            unsaved: false,
+            save_path: None,
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
@@ -715,36 +870,62 @@ impl eframe::App for TIDE {
             let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
 
             egui::menu::bar(ui, |ui| {
-                /*ui.menu_button("File", |ui| {
+                ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
-                        TIDE::manage_file_result(self.new_file());
+                        let made_new = block_on(TIDE::new_file(
+                            self.save_path.clone(),
+                            self.source.clone(),
+                            self.unsaved,
+                        ));
+
+                        if made_new {
+                            self.reset();
+                        }
                     }
 
                     if ui.button("Open").clicked() {
-                        TIDE::manage_file_result(self.open_file());
+                        if let OpenFileResult::Opened(source) = block_on(TIDE::open_file(
+                            self.save_path.clone(),
+                            self.source.clone(),
+                            self.unsaved,
+                        )) {
+                            self.source = source;
+                        }
                     }
 
                     ui.separator();
 
                     if ui.button("Save").clicked() {
-                        TIDE::manage_file_result(self.save_file());
+                        let result =
+                            block_on(TIDE::save_file(self.save_path.clone(), self.source.clone()));
+
+                        match result {
+                            SaveFileResult::Saved(_) => self.unsaved = false,
+                            _ => {}
+                        }
                     }
 
                     if ui.button("Save As").clicked() {
-                        TIDE::manage_file_result(self.save_file_as());
+                        let result = block_on(TIDE::save_file_as(self.source.clone()));
+
+                        match result {
+                            SaveFileResult::Saved(_) => self.unsaved = false,
+                            _ => {}
+                        }
                     }
 
-                    ui.separator();
+                    //ui.separator();
 
                     // TODO: Submenu "Recent Files"
 
-                    ui.separator();
+                    //ui.separator();
 
-                    if ui.button("Exit").clicked() {
+                    /*if ui.button("Exit").clicked() {
                         todo!();
-                    }
+                    }*/
                 });
 
+                /*
                 ui.menu_button("Edit", |ui| {
                     if ui.button("Cut").clicked() {
                         todo!();
