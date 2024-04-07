@@ -13,13 +13,15 @@ use rfd::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::future::Future;
 use std::path::PathBuf;
+use std::rc::Rc;
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
 
 enum OpenFileResult {
-    Opened(String),
+    Opened(Option<PathBuf>, String),
     Cancelled,
     Fail,
 }
@@ -29,6 +31,12 @@ enum SaveFileResult {
     UnsavedContinuing,
     UnsavedCancelled,
     Fail,
+}
+
+enum AsyncFnReturn {
+    NewFile(bool),
+    OpenFile(OpenFileResult),
+    SaveFile(SaveFileResult),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -382,6 +390,8 @@ struct TIDE {
     unsaved: bool,
     save_path: Option<PathBuf>,
     #[serde(skip)]
+    futures: Vec<Rc<dyn Future<Output = ()>>>,
+    #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
     source_map: HashMap<Address, usize>,
@@ -475,7 +485,10 @@ impl TIDE {
             .show()
             .await
         {
-            MessageDialogResult::Yes => TIDE::save_file(save_path, source).await,
+            MessageDialogResult::Yes => match TIDE::save_file(save_path, source).await {
+                AsyncFnReturn::SaveFile(SaveFileResult::Saved(s)) => SaveFileResult::Saved(s),
+                _ => SaveFileResult::Fail,
+            },
             MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
             _ => SaveFileResult::UnsavedCancelled,
         }
@@ -509,27 +522,26 @@ impl TIDE {
         return true;
     }
 
-    async fn open_file(
-        save_path: Option<PathBuf>,
-        source: String,
-        unsaved: bool,
-    ) -> OpenFileResult {
+    async fn open_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
         if unsaved {
             match TIDE::handle_unsaved(save_path, source).await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return OpenFileResult::Cancelled
+                    return AsyncFnReturn::OpenFile(OpenFileResult::Cancelled)
                 }
                 _ => {}
             }
         }
 
-        let contents = match AsyncFileDialog::new()
+        let mut path = None;
+
+        let result = match AsyncFileDialog::new()
             .set_title("Open file")
             .add_filter("tiny", &["tny"])
             .pick_file()
             .await
         {
             Some(handle) => {
+                path = maybe_file_path(&handle);
                 let bytes = handle.read().await;
                 std::str::from_utf8(&bytes)
                     .map(|s| s.to_owned())
@@ -538,8 +550,8 @@ impl TIDE {
             None => Err(anyhow!("Unable to open file")),
         };
 
-        match contents {
-            Ok(s) => OpenFileResult::Opened(s),
+        match result {
+            Ok(s) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
             Err(e) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
@@ -548,12 +560,12 @@ impl TIDE {
                     .set_buttons(MessageButtons::Ok)
                     .show()
                     .await;
-                OpenFileResult::Fail
+                AsyncFnReturn::OpenFile(OpenFileResult::Fail)
             }
         }
     }
 
-    async fn save_file(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+    async fn save_file(save_path: Option<PathBuf>, source: String) -> AsyncFnReturn {
         let result = match save_path.as_ref() {
             Some(path) => fs::write(path, source.as_bytes()),
             None => {
@@ -562,7 +574,7 @@ impl TIDE {
         };
 
         match result {
-            Ok(_) => SaveFileResult::Saved(save_path),
+            Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
             Err(_) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
@@ -571,12 +583,12 @@ impl TIDE {
                     .set_buttons(MessageButtons::Ok)
                     .show()
                     .await;
-                SaveFileResult::Fail
+                AsyncFnReturn::SaveFile(SaveFileResult::Fail)
             }
         }
     }
 
-    async fn save_file_as(source: String) -> SaveFileResult {
+    async fn save_file_as(source: String) -> AsyncFnReturn {
         let save_path;
 
         let result = match AsyncFileDialog::new()
@@ -590,12 +602,12 @@ impl TIDE {
                 handle.write(source.as_bytes()).await.map_err(|e| e)
             }
             None => {
-                return SaveFileResult::UnsavedCancelled;
+                return AsyncFnReturn::SaveFile(SaveFileResult::UnsavedCancelled);
             }
         };
 
         match result {
-            Ok(_) => SaveFileResult::Saved(save_path),
+            Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
             Err(_) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
@@ -604,7 +616,7 @@ impl TIDE {
                     .set_buttons(MessageButtons::Ok)
                     .show()
                     .await;
-                SaveFileResult::Fail
+                AsyncFnReturn::SaveFile(SaveFileResult::Fail)
             }
         }
     }
@@ -767,6 +779,7 @@ impl Default for TIDE {
             source: String::new(),
             unsaved: false,
             save_path: None,
+            futures: vec![],
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
@@ -884,11 +897,14 @@ impl eframe::App for TIDE {
                     }
 
                     if ui.button("Open").clicked() {
-                        if let OpenFileResult::Opened(source) = block_on(TIDE::open_file(
-                            self.save_path.clone(),
-                            self.source.clone(),
-                            self.unsaved,
-                        )) {
+                        if let AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, source)) =
+                            block_on(TIDE::open_file(
+                                self.save_path.clone(),
+                                self.source.clone(),
+                                self.unsaved,
+                            ))
+                        {
+                            self.save_path = path;
                             self.source = source;
                         }
                     }
@@ -900,7 +916,10 @@ impl eframe::App for TIDE {
                             block_on(TIDE::save_file(self.save_path.clone(), self.source.clone()));
 
                         match result {
-                            SaveFileResult::Saved(_) => self.unsaved = false,
+                            AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
+                                self.unsaved = false;
+                                self.save_path = path;
+                            }
                             _ => {}
                         }
                     }
@@ -909,7 +928,10 @@ impl eframe::App for TIDE {
                         let result = block_on(TIDE::save_file_as(self.source.clone()));
 
                         match result {
-                            SaveFileResult::Saved(_) => self.unsaved = false,
+                            AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
+                                self.unsaved = false;
+                                self.save_path = path;
+                            }
                             _ => {}
                         }
                     }
