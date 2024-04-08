@@ -530,14 +530,15 @@ impl TIDE {
     async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
         match AsyncMessageDialog::new()
             .set_level(MessageLevel::Warning)
-            .set_title("Some changes unsaved")
-            .set_description("Unsaved changes will be lost. Continue?")
+            .set_title("Save changes?")
+            .set_description("Unsaved changes will be lost. Save changes?")
             .set_buttons(MessageButtons::YesNoCancel)
             .show()
             .await
         {
             MessageDialogResult::Yes => match TIDE::save_file(save_path, source).await {
-                AsyncFnReturn::SaveFile(SaveFileResult::Saved(s)) => SaveFileResult::Saved(s),
+                AsyncFnReturn::SaveFile(r @ SaveFileResult::Saved(_)) => r,
+                AsyncFnReturn::SaveFile(r @ SaveFileResult::UnsavedCancelled) => r,
                 _ => {
                     TIDE::save_failed_message().await;
                     SaveFileResult::Fail
