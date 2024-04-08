@@ -247,7 +247,34 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     })
             }
             "Executable" => {
-                ui.label("TODO");
+                if let Some(cpu) = self.tide.cpu.as_ref() {
+                    let max_address = self
+                        .tide
+                        .source_map
+                        .iter()
+                        .max_by_key(|(&address, _)| address)
+                        .map(|(a, _)| a.0)
+                        .unwrap_or(0);
+
+                    // Show "AAA, XXXXX" for all addresses up to the last source-mapped one
+                    for i in 0..max_address {
+                        ui.monospace(format!(
+                            "{:03}, {:05}",
+                            i,
+                            cpu.memory[Address::new(i as u16)].0
+                        ));
+                    }
+
+                    ui.group(|ui| {
+                        ui.label("Symbol table");
+                        ui.separator();
+
+                        // Symbol table here
+                        for address in self.tide.symbols.keys() {
+                            ui.monospace(format!("{:03}, {}", address, self.tide.symbols[address]));
+                        }
+                    });
+                }
             }
             "Memory" => {
                 if let Some(cpu) = self.tide.cpu.as_ref() {
