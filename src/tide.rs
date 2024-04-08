@@ -5,7 +5,6 @@ use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
-use pollster::block_on;
 use rfd::{
     AsyncFileDialog, AsyncMessageDialog, FileHandle, MessageButtons, MessageDialogResult,
     MessageLevel,
@@ -13,12 +12,12 @@ use rfd::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::future::Future;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::mpsc::{Receiver, Sender};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
+use tokio::runtime::Runtime;
 
 enum OpenFileResult {
     Opened(Option<PathBuf>, String),
@@ -384,13 +383,17 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct TIDE {
     source: String,
     #[serde(skip)]
     unsaved: bool,
     #[serde(skip)]
     save_path: Option<PathBuf>,
+    #[serde(skip, default = "default_channels")]
+    channels: Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)>,
+    #[serde(skip, default = "default_runtime")]
+    runtime: Runtime,
     #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
@@ -423,6 +426,14 @@ struct TIDE {
 
     #[serde(skip)]
     about_window_open: bool,
+}
+
+fn default_channels() -> Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)> {
+    Some(std::sync::mpsc::channel())
+}
+
+fn default_runtime() -> Runtime {
+    Runtime::new().unwrap()
 }
 
 fn default_dock_state() -> DockState<String> {
@@ -460,6 +471,37 @@ fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
 }
 
 impl TIDE {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        if let Some(storage) = cc.storage {
+            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        }
+
+        Default::default()
+    }
+
+    fn clone(&self) -> TIDE {
+        TIDE {
+            source: self.source.clone(),
+            unsaved: self.unsaved,
+            save_path: self.save_path.clone(),
+            channels: None,
+            runtime: default_runtime(), // FIXME: Probably slow
+            symbols: self.symbols.clone(),
+            source_map: self.source_map.clone(),
+            breakpoints: self.breakpoints.clone(),
+            cpu: self.cpu.clone(),
+            cpu_state: self.cpu_state.clone(),
+            running_to_completion: self.running_to_completion,
+            focus_redirect: self.focus_redirect.clone(),
+            input: self.input.clone(),
+            input_ready: self.input_ready,
+            output: self.output.clone(),
+            error: self.error.clone(),
+            dock_state: self.dock_state.clone(),
+            about_window_open: self.about_window_open,
+        }
+    }
+
     fn assemble(&mut self) -> TinyResult<()> {
         self.input.clear();
         self.input_ready = false;
@@ -511,15 +553,17 @@ impl TIDE {
         self.error.clear();
     }
 
-    async fn new_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> bool {
+    async fn new_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
         if unsaved {
             match TIDE::handle_unsaved(save_path, source).await {
-                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => return false,
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return AsyncFnReturn::NewFile(false)
+                }
                 _ => {}
             }
         }
 
-        return true;
+        return AsyncFnReturn::NewFile(true);
     }
 
     async fn open_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
@@ -761,24 +805,16 @@ impl TIDE {
     fn toggle_breakpoint(&mut self) {
         //todo!();
     }
-
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
-
-        Default::default()
-    }
 }
 
 impl Default for TIDE {
     fn default() -> Self {
-        let dock_state = default_dock_state();
-
         Self {
             source: String::new(),
             unsaved: false,
             save_path: None,
+            channels: default_channels(),
+            runtime: default_runtime(),
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
@@ -795,7 +831,7 @@ impl Default for TIDE {
 
             error: String::new(),
 
-            dock_state,
+            dock_state: default_dock_state(),
 
             about_window_open: false,
         }
@@ -831,6 +867,8 @@ impl eframe::App for TIDE {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let _guard = self.runtime.enter();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.about_window_open {
                 egui::Window::new("About")
@@ -881,58 +919,63 @@ impl eframe::App for TIDE {
             let mut step_into_pressed = ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
             let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
 
+            // Handle file IO state updates
+            while let Ok(result) = self.channels.as_mut().unwrap().1.recv() {
+                match result {
+                    AsyncFnReturn::NewFile(true) => self.reset(),
+                    AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, source)) => {
+                        self.save_path = path;
+                        self.source = source;
+                    }
+                    AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
+                        self.unsaved = false;
+                        self.save_path = path;
+                    }
+                    _ => {}
+                }
+            }
+
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
-                        let made_new = block_on(TIDE::new_file(
-                            self.save_path.clone(),
-                            self.source.clone(),
-                            self.unsaved,
-                        ));
+                        let tx = self.channels.as_mut().unwrap().0.clone();
+                        let save_path = self.save_path.clone();
+                        let source = self.source.clone();
+                        let unsaved = self.unsaved;
 
-                        if made_new {
-                            self.reset();
-                        }
+                        tokio::spawn(async move {
+                            tx.send(TIDE::new_file(save_path, source, unsaved).await)
+                        });
                     }
 
                     if ui.button("Open").clicked() {
-                        if let AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, source)) =
-                            block_on(TIDE::open_file(
-                                self.save_path.clone(),
-                                self.source.clone(),
-                                self.unsaved,
-                            ))
-                        {
-                            self.save_path = path;
-                            self.source = source;
-                        }
+                        let tx = self.channels.as_mut().unwrap().0.clone();
+                        let save_path = self.save_path.clone();
+                        let source = self.source.clone();
+                        let unsaved = self.unsaved;
+
+                        tokio::spawn(async move {
+                            tx.send(TIDE::open_file(save_path, source, unsaved).await)
+                        });
                     }
 
                     ui.separator();
 
                     if ui.button("Save").clicked() {
-                        let result =
-                            block_on(TIDE::save_file(self.save_path.clone(), self.source.clone()));
+                        let tx = self.channels.as_mut().unwrap().0.clone();
+                        let save_path = self.save_path.clone();
+                        let source = self.source.clone();
 
-                        match result {
-                            AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
-                                self.unsaved = false;
-                                self.save_path = path;
-                            }
-                            _ => {}
-                        }
+                        tokio::spawn(
+                            async move { tx.send(TIDE::save_file(save_path, source).await) },
+                        );
                     }
 
                     if ui.button("Save As").clicked() {
-                        let result = block_on(TIDE::save_file_as(self.source.clone()));
+                        let tx = self.channels.as_mut().unwrap().0.clone();
+                        let source = self.source.clone();
 
-                        match result {
-                            AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
-                                self.unsaved = false;
-                                self.save_path = path;
-                            }
-                            _ => {}
-                        }
+                        tokio::spawn(async move { tx.send(TIDE::save_file_as(source).await) });
                     }
 
                     //ui.separator();
@@ -1022,7 +1065,7 @@ impl eframe::App for TIDE {
                 self.toggle_breakpoint();
             }
 
-            let mut cloned = self.clone();
+            let mut cloned = TIDE::clone(&self);
 
             match self.focus_redirect {
                 Focus::None => {}
