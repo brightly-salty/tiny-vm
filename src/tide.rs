@@ -387,10 +387,10 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 #[derive(Clone, Serialize, Deserialize)]
 struct TIDE {
     source: String,
-    unsaved: bool,
-    save_path: Option<PathBuf>,
     #[serde(skip)]
-    futures: Vec<Rc<dyn Future<Output = ()>>>,
+    unsaved: bool,
+    #[serde(skip)]
+    save_path: Option<PathBuf>,
     #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
@@ -779,7 +779,6 @@ impl Default for TIDE {
             source: String::new(),
             unsaved: false,
             save_path: None,
-            futures: vec![],
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
