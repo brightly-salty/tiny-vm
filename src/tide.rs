@@ -516,20 +516,49 @@ impl TIDE {
         Ok(())
     }
 
+    async fn save_failed_message() {
+        AsyncMessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title("Unable to save file")
+            .set_description("Could not save file")
+            .set_buttons(MessageButtons::Ok)
+            .show()
+            .await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
         match AsyncMessageDialog::new()
             .set_level(MessageLevel::Warning)
-            .set_title("Save changes before closing?")
-            .set_description("Unsaved changes will be lost")
+            .set_title("Some changes unsaved")
+            .set_description("Unsaved changes will be lost. Continue?")
             .set_buttons(MessageButtons::YesNoCancel)
             .show()
             .await
         {
             MessageDialogResult::Yes => match TIDE::save_file(save_path, source).await {
                 AsyncFnReturn::SaveFile(SaveFileResult::Saved(s)) => SaveFileResult::Saved(s),
-                _ => SaveFileResult::Fail,
+                _ => {
+                    TIDE::save_failed_message().await;
+                    SaveFileResult::Fail
+                }
             },
             MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
+            _ => SaveFileResult::UnsavedCancelled,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+        match AsyncMessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("Some changes unsaved")
+            .set_description("Unsaved changes will be lost. Continue?")
+            .set_buttons(MessageButtons::OkCancel)
+            .show()
+            .await
+        {
+            MessageDialogResult::Ok => SaveFileResult::UnsavedContinuing,
             _ => SaveFileResult::UnsavedCancelled,
         }
     }
@@ -618,13 +647,7 @@ impl TIDE {
         match result {
             Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
             Err(_) => {
-                AsyncMessageDialog::new()
-                    .set_level(MessageLevel::Error)
-                    .set_title("Unable to save file")
-                    .set_description("Could not save file")
-                    .set_buttons(MessageButtons::Ok)
-                    .show()
-                    .await;
+                TIDE::save_failed_message().await;
                 AsyncFnReturn::SaveFile(SaveFileResult::Fail)
             }
         }
@@ -651,13 +674,7 @@ impl TIDE {
         match result {
             Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
             Err(_) => {
-                AsyncMessageDialog::new()
-                    .set_level(MessageLevel::Error)
-                    .set_title("Unable to save file")
-                    .set_description("Could not save file")
-                    .set_buttons(MessageButtons::Ok)
-                    .show()
-                    .await;
+                TIDE::save_failed_message().await;
                 AsyncFnReturn::SaveFile(SaveFileResult::Fail)
             }
         }
