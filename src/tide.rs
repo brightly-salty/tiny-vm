@@ -5,6 +5,7 @@ use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
+use pollster::block_on;
 use rfd::{
     AsyncFileDialog, AsyncMessageDialog, FileHandle, MessageButtons, MessageDialogResult,
     MessageLevel,
@@ -12,12 +13,12 @@ use rfd::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
-use tokio::runtime::Runtime;
 
 enum OpenFileResult {
     Opened(Option<PathBuf>, String),
@@ -383,17 +384,19 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 }
 
+fn default_unsaved() -> bool {
+    return true;
+}
+
 #[derive(Serialize, Deserialize)]
 struct TIDE {
     source: String,
-    #[serde(skip)]
+    #[serde(skip, default = "default_unsaved")]
     unsaved: bool,
     #[serde(skip)]
     save_path: Option<PathBuf>,
     #[serde(skip, default = "default_channels")]
     channels: Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)>,
-    #[serde(skip, default = "default_runtime")]
-    runtime: Runtime,
     #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
@@ -430,10 +433,6 @@ struct TIDE {
 
 fn default_channels() -> Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)> {
     Some(std::sync::mpsc::channel())
-}
-
-fn default_runtime() -> Runtime {
-    Runtime::new().unwrap()
 }
 
 fn default_dock_state() -> DockState<String> {
@@ -485,7 +484,6 @@ impl TIDE {
             unsaved: self.unsaved,
             save_path: self.save_path.clone(),
             channels: None,
-            runtime: default_runtime(), // FIXME: Probably slow
             symbols: self.symbols.clone(),
             source_map: self.source_map.clone(),
             breakpoints: self.breakpoints.clone(),
@@ -811,10 +809,9 @@ impl Default for TIDE {
     fn default() -> Self {
         Self {
             source: String::new(),
-            unsaved: false,
+            unsaved: default_unsaved(),
             save_path: None,
             channels: default_channels(),
-            runtime: default_runtime(),
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: vec![],
@@ -861,14 +858,22 @@ const STOP_SHORTCUT: egui::KeyboardShortcut =
 const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F9);
 
+#[cfg(not(target_arch = "wasm32"))]
+fn run_future<T: Future<Output = ()> + 'static>(f: T) {
+    block_on(f);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_future<T: Future<Output = ()> + 'static>(f: T) {
+    wasm_bindgen_futures::spawn_local(f);
+}
+
 impl eframe::App for TIDE {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let _guard = self.runtime.enter();
-
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.about_window_open {
                 egui::Window::new("About")
@@ -920,7 +925,15 @@ impl eframe::App for TIDE {
             let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
 
             // Handle file IO state updates
-            while let Ok(result) = self.channels.as_mut().unwrap().1.recv() {
+            let results = self
+                .channels
+                .as_mut()
+                .unwrap()
+                .1
+                .try_iter()
+                .collect::<Vec<AsyncFnReturn>>();
+
+            for result in results {
                 match result {
                     AsyncFnReturn::NewFile(true) => self.reset(),
                     AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, source)) => {
@@ -943,8 +956,9 @@ impl eframe::App for TIDE {
                         let source = self.source.clone();
                         let unsaved = self.unsaved;
 
-                        tokio::spawn(async move {
+                        run_future(async move {
                             tx.send(TIDE::new_file(save_path, source, unsaved).await)
+                                .expect("Couldn't send New File result");
                         });
                     }
 
@@ -954,8 +968,9 @@ impl eframe::App for TIDE {
                         let source = self.source.clone();
                         let unsaved = self.unsaved;
 
-                        tokio::spawn(async move {
+                        run_future(async move {
                             tx.send(TIDE::open_file(save_path, source, unsaved).await)
+                                .expect("Couldn't send Open File result");
                         });
                     }
 
@@ -966,16 +981,20 @@ impl eframe::App for TIDE {
                         let save_path = self.save_path.clone();
                         let source = self.source.clone();
 
-                        tokio::spawn(
-                            async move { tx.send(TIDE::save_file(save_path, source).await) },
-                        );
+                        run_future(async move {
+                            tx.send(TIDE::save_file(save_path, source).await)
+                                .expect("Couldn't send Save File result");
+                        });
                     }
 
                     if ui.button("Save As").clicked() {
                         let tx = self.channels.as_mut().unwrap().0.clone();
                         let source = self.source.clone();
 
-                        tokio::spawn(async move { tx.send(TIDE::save_file_as(source).await) });
+                        run_future(async move {
+                            tx.send(TIDE::save_file_as(source).await)
+                                .expect("Couldn't send Save As File result");
+                        });
                     }
 
                     //ui.separator();
