@@ -2,9 +2,7 @@
 
 ## Phase 1: Feature parity with TIDE.exe
 
-- file opening, saving, creation
 - breakpoints
-- executable tab
 - add shortcuts to full menubar
 - help menu option
 - add step over/step into
