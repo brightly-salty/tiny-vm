@@ -160,7 +160,11 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
         let operand_str = &opcode_parts[1..].join(" ");
         Line {
             ln,
-            oc: if let Ok(imm) = operand_str.parse::<u16>().map(Address) {
+            oc: if opcode_parts[0].to_ascii_lowercase() == "db" {
+                Instruction::Easy(vec![Byte(operand_str.parse().map_err(|_| {
+                    TinyError::InvalidOperand(ln, "db".to_string(), operand_str.clone())
+                })?)])
+            } else if let Ok(imm) = operand_str.parse::<u16>().map(Address) {
                 Instruction::Easy(match opcode_parts[0].to_ascii_lowercase().as_str() {
                     "ld" => vec![instruction(91, imm)],
                     "add" => vec![instruction(96, imm)],
@@ -168,9 +172,6 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
                     "mul" => vec![instruction(98, imm)],
                     "div" => vec![instruction(99, imm)],
                     "ldparam" => vec![instruction(20, imm)],
-                    "db" => vec![Byte(operand_str.parse().map_err(|_| {
-                        TinyError::InvalidOperand(ln, "db".to_string(), operand_str.clone())
-                    })?)],
                     "ds" => {
                         let n = operand_str.parse().map_err(|_| {
                             TinyError::InvalidOperand(ln, "ds".to_string(), operand_str.clone())
