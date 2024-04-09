@@ -852,16 +852,18 @@ impl Default for TIDE {
 }
 
 #[cfg(target_os = "macos")]
-async fn create_pick_file_dialog() -> Result<(Option<PathBuf>, String)> {
+async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
     match rfd::FileDialog::new()
         .set_title("Open file")
         .add_filter("tiny", &["tny"])
         .pick_file()
     {
-        Some(path) => std::fs::read_to_string(path.clone())
-            .map(|s| (Some(path.to_owned()), s))
-            .map_err(|e| e.into()),
-        None => Err(anyhow!("Unable to open file")),
+        Some(path) => Some(
+            std::fs::read_to_string(path.clone())
+                .map(|s| (Some(path.to_owned()), s))
+                .map_err(|e| e.into()),
+        ),
+        None => None,
     }
 }
 
