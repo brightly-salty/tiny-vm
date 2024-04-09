@@ -434,6 +434,8 @@ struct TIDE {
     cpu_state: Option<Output>,
     #[serde(skip)]
     running_to_completion: bool,
+    #[serde(skip)]
+    stepping_over: bool,
 
     #[serde(skip)]
     focus_redirect: Focus,
@@ -515,6 +517,7 @@ impl TIDE {
             cpu: self.cpu.clone(),
             cpu_state: self.cpu_state.clone(),
             running_to_completion: self.running_to_completion,
+            stepping_over: self.stepping_over,
             focus_redirect: self.focus_redirect.clone(),
             input: self.input.clone(),
             input_ready: self.input_ready,
@@ -599,6 +602,7 @@ impl TIDE {
         self.cpu = None;
         self.cpu_state = None;
         self.running_to_completion = false;
+        self.stepping_over = false;
         self.focus_redirect = Focus::None;
         self.input.clear();
         self.input_ready = false;
@@ -704,6 +708,7 @@ impl TIDE {
 
     fn stop(&mut self) {
         self.running_to_completion = false;
+        self.stepping_over = false;
         self.cpu.take();
         self.cpu_state.take();
         self.source_map.clear();
@@ -765,10 +770,11 @@ impl TIDE {
                     return;
                 }
             }
-            Output::ReadyToCycle => cpu.step(Input::None),
+            Output::JumpedToFunction | Output::ReadyToCycle | Output::ReturnedFromFunction => {
+                cpu.step(Input::None)
+            }
 
             _ => {
-                // TODO
                 return;
             }
         };
@@ -786,6 +792,7 @@ impl TIDE {
             Ok(ref out @ Output::Stopped) => {
                 *cpu_state = out.clone();
                 self.running_to_completion = false;
+                self.stepping_over = false;
                 self.error.push_str("Completed");
             }
             Ok(
@@ -796,24 +803,19 @@ impl TIDE {
                 self.focus_redirect = Focus::Input;
                 *cpu_state = out.clone();
             }
+            Ok(ref out @ Output::JumpedToFunction | ref out @ Output::ReturnedFromFunction) => {
+                self.stepping_over = false;
+                *cpu_state = out.clone();
+            }
             Ok(out) => *cpu_state = out,
 
             Err(e) => {
                 *cpu_state = Output::Stopped;
                 self.running_to_completion = false;
+                self.stepping_over = false;
                 self.focused_error(&e);
             }
         };
-    }
-
-    fn step_over(&mut self) {
-        //todo!();
-        //self.cpu.step_over();
-    }
-
-    fn step_into(&mut self) {
-        //todo!();
-        //self.cpu.step_into();
     }
 
     fn toggle_breakpoint(&mut self) {
@@ -834,6 +836,7 @@ impl Default for TIDE {
             cpu: None,
             cpu_state: None,
             running_to_completion: false,
+            stepping_over: false,
 
             focus_redirect: Focus::None,
 
@@ -1156,12 +1159,12 @@ impl eframe::App for TIDE {
             }
 
             if step_over_pressed {
-                self.step();
-                //self.step_over();
+                self.stepping_over = true;
+                self.step(); 
             }
 
             if step_into_pressed {
-                self.step_into();
+                self.step();
             }
 
             if breakpoint_pressed {
@@ -1205,7 +1208,7 @@ impl eframe::App for TIDE {
             self.cpu_state = cloned.cpu_state;
             self.focus_redirect = Focus::None;
 
-            if self.running_to_completion {
+            if self.running_to_completion | self.stepping_over {
                 self.step();
             } else {
                 if self.input_ready {

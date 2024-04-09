@@ -1,0 +1,57 @@
+jmp main
+
+x:	ds 1
+y:	ds 1
+msg1:	dc "Enter two numbers: "
+
+gcd_x: ds 1
+gcd_y: ds 1
+gcd_t: ds 1
+neg1: db -1
+
+gcd:
+	ldparam 1
+	st gcd_x
+	ldparam 2
+	st gcd_y
+	ld x
+	div y
+	mul y
+	sub x
+	mul neg1
+	st gcd_t
+
+gcd_while_1:
+	ld gcd_t
+	jg gcd_while_1_begin
+	jmp gcd_while_1_end
+
+gcd_while_1_begin:
+	ld y
+	st x
+	ld gcd_t
+	st y
+	ld x
+	div y
+	mul y
+	sub x
+	mul neg1
+	st gcd_t
+
+gcd_while_1_end:
+	ld gcd_y
+	ret
+
+main:
+	lda msg1
+	call printString
+	call inputInteger
+	st x
+	call inputInteger
+	st y
+	push y
+	push x
+	call gcd
+	pop
+	pop
+	call printInteger
