@@ -144,15 +144,17 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
     let opcode = if opcode_parts.len() == 1 {
         Line {
             ln,
-            oc: Instruction::Easy(vec![Byte(match opcode_parts[0].to_ascii_lowercase().as_str() {
-                "stop" => 0,
-                "in" => 10_000,
-                "out" => 11_000,
-                "ret" => 17_000,
-                "push" => 18_000,
-                "pop" => 19_000,
-                s => return Err(TinyError::UnknownOpcode(ln, s.to_owned())),
-            })]),
+            oc: Instruction::Easy(vec![Byte(
+                match opcode_parts[0].to_ascii_lowercase().as_str() {
+                    "stop" => 0,
+                    "in" => 10_000,
+                    "out" => 11_000,
+                    "ret" => 17_000,
+                    "push" => 18_000,
+                    "pop" => 19_000,
+                    s => return Err(TinyError::UnknownOpcode(ln, s.to_owned())),
+                },
+            )]),
         }
     } else {
         let operand_str = &opcode_parts[1..].join(" ");

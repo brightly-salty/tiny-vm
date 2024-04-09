@@ -1,5 +1,5 @@
 use crate::types::{Address, Byte, Instruction, TinyError, TinyResult};
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Copy)]
@@ -142,12 +142,16 @@ impl Cpu {
                 }
                 Output::Char(c) => {
                     print!("{c}");
-                    std::io::stdout().flush().map_err(|_| TinyError::OutputError)?;
+                    std::io::stdout()
+                        .flush()
+                        .map_err(|_| TinyError::OutputError)?;
                     input = Input::None;
                 }
                 Output::String(s) => {
                     print!("{s}");
-                    std::io::stdout().flush().map_err(|_| TinyError::OutputError)?;
+                    std::io::stdout()
+                        .flush()
+                        .map_err(|_| TinyError::OutputError)?;
                     input = Input::None;
                 }
                 Output::ReadyToCycle => {
@@ -269,9 +273,7 @@ impl Cpu {
                 }
             }
             16 => match self.cu.ir.operand {
-                Address(900) => {
-                    return Ok(Output::String(self.alu.acc.0.to_string()))
-                },
+                Address(900) => return Ok(Output::String(self.alu.acc.0.to_string())),
                 Address(925) => {
                     let mut address = self.alu.acc.read_as_address()?;
                     let mut buffer = String::new();

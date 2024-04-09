@@ -1,15 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use anyhow::{anyhow, Result};
-use eframe::egui;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 use pollster::block_on;
-use rfd::{
-    AsyncFileDialog, AsyncMessageDialog, FileHandle, MessageButtons, MessageDialogResult,
-    MessageLevel,
-};
+#[cfg(not(target_os = "macos"))]
+use rfd::FileHandle;
+use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -126,7 +124,7 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
             .code_editor()
             .desired_width(f32::INFINITY)
             .min_size(ui.available_size())
-            .layouter(&mut |ui, string, wrap_width| {
+            .layouter(&mut |ui, string, _wrap_width| {
                 let mut layout_job = egui::text::LayoutJob::default();
 
                 layout_job.wrap.max_width = f32::INFINITY;
@@ -486,7 +484,7 @@ fn default_dock_state() -> DockState<String> {
     dock_state
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
 fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
     Some(handle.path().to_owned())
 }
@@ -631,26 +629,8 @@ impl TIDE {
             }
         }
 
-        let mut path = None;
-
-        let result = match AsyncFileDialog::new()
-            .set_title("Open file")
-            .add_filter("tiny", &["tny"])
-            .pick_file()
-            .await
-        {
-            Some(handle) => {
-                path = maybe_file_path(&handle);
-                let bytes = handle.read().await;
-                std::str::from_utf8(&bytes)
-                    .map(|s| s.to_owned())
-                    .map_err(|e| e.into())
-            }
-            None => Err(anyhow!("Unable to open file")),
-        };
-
-        match result {
-            Ok(s) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
+        match create_pick_file_dialog().await {
+            Ok((path, s)) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
             Err(e) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
@@ -682,25 +662,15 @@ impl TIDE {
     }
 
     async fn save_file_as(source: String) -> AsyncFnReturn {
-        let save_path;
-
-        let result = match AsyncFileDialog::new()
-            .set_title("Save file")
-            .add_filter("tiny", &["tny"])
-            .save_file()
-            .await
-        {
-            Some(handle) => {
-                save_path = maybe_file_path(&handle);
-                handle.write(source.as_bytes()).await.map_err(|e| e)
-            }
+        let result = match create_save_file_dialog(source).await {
+            Some(result) => result,
             None => {
                 return AsyncFnReturn::SaveFile(SaveFileResult::UnsavedCancelled);
             }
         };
 
         match result {
-            Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
+            Ok(save_path) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
             Err(_) => {
                 TIDE::save_failed_message().await;
                 AsyncFnReturn::SaveFile(SaveFileResult::Fail)
@@ -878,6 +848,71 @@ impl Default for TIDE {
             about_window_open: false,
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+async fn create_pick_file_dialog() -> Result<(Option<PathBuf>, String)> {
+    match rfd::FileDialog::new()
+        .set_title("Open file")
+        .add_filter("tiny", &["tny"])
+        .pick_file()
+    {
+        Some(path) => std::fs::read_to_string(path.clone())
+            .map(|s| (Some(path.to_owned()), s))
+            .map_err(|e| e.into()),
+        None => Err(anyhow!("Unable to open file")),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn create_pick_file_dialog() -> Result<(Option<PathBuf>, String)> {
+    match rfd::AsyncFileDialog::new()
+        .set_title("Open file")
+        .add_filter("tiny", &["tny"])
+        .pick_file()
+        .await
+    {
+        Some(handle) => {
+            let path = mabye_file_path(handle);
+            std::fs::read_to_string(path.clone())
+                .map(|s| (path.to_owned(), s))
+                .map_err(|e| e.into())
+        }
+        None => Err(anyhow!("Unable to open file")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
+    rfd::FileDialog::new()
+        .set_title("Save file")
+        .add_filter("tiny", &["tny"])
+        .save_file()
+        .map(|path| {
+            std::fs::write(path.clone(), source.as_bytes())
+                .map(|_| Some(path))
+                .map_err(|e| e.into())
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
+    match &rfd::AsyncFileDialog::new()
+        .set_title("Save file")
+        .add_filter("tiny", &["tny"])
+        .save_file()
+        .await
+    {
+        Some(handle) => {
+            let path = maybe_file_path(handle);
+            handle
+                .write(source.as_bytes())
+                .await
+                .map(|_| path)
+                .map_err(|e| e)
+        }
+        None => None,
+    };
 }
 
 const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
