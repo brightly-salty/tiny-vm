@@ -75,6 +75,8 @@ pub enum Output {
     WaitingForString,
     Char(char),
     String(String),
+    ReturnedFromFunction,
+    JumpedToFunction,
     Stopped,
     ReadyToCycle,
 }
@@ -154,7 +156,7 @@ impl Cpu {
                         .map_err(|_| TinyError::OutputError)?;
                     input = Input::None;
                 }
-                Output::ReadyToCycle => {
+                Output::ReadyToCycle | Output::JumpedToFunction | Output::ReturnedFromFunction => {
                     input = Input::None;
                 }
                 Output::Stopped => {
@@ -299,6 +301,7 @@ impl Cpu {
                     self.push(self.alu.bp.into_byte()); // push previous value of BP
                     self.alu.bp = self.alu.sp; // update value of BF
                     self.jump_to(adr); // jump to start of function
+                    return Ok(Output::JumpedToFunction);
                 }
             },
             17 => {
@@ -306,6 +309,7 @@ impl Cpu {
                 self.alu.bp = self.pop().read_as_address()?; // restore BP to its previous value
                 let address = self.pop().read_as_address()?;
                 self.jump_to(address); // restore IP to return address
+                return Ok(Output::ReturnedFromFunction);
             }
             18 => {
                 self.push(self.alu.acc);
