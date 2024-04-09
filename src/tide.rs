@@ -630,8 +630,8 @@ impl TIDE {
         }
 
         match create_pick_file_dialog().await {
-            Ok((path, s)) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
-            Err(e) => {
+            Some(Ok((path, s))) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
+            Some(Err(e)) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
                     .set_title("Unable to open file")
@@ -641,6 +641,7 @@ impl TIDE {
                     .await;
                 AsyncFnReturn::OpenFile(OpenFileResult::Fail)
             }
+            None => AsyncFnReturn::OpenFile(OpenFileResult::Cancelled),
         }
     }
 
@@ -865,20 +866,19 @@ async fn create_pick_file_dialog() -> Result<(Option<PathBuf>, String)> {
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn create_pick_file_dialog() -> Result<(Option<PathBuf>, String)> {
+async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
     match rfd::AsyncFileDialog::new()
         .set_title("Open file")
         .add_filter("tiny", &["tny"])
         .pick_file()
         .await
     {
-        Some(handle) => {
-            let path = mabye_file_path(handle);
-            std::fs::read_to_string(path.clone())
-                .map(|s| (path.to_owned(), s))
-                .map_err(|e| e.into())
-        }
-        None => Err(anyhow!("Unable to open file")),
+        Some(handle) => Some(
+            String::from_utf8(handle.read().await)
+                .and_then(|s| Ok((maybe_file_path(&handle), s)))
+                .map_err(|e| e.into()),
+        ),
+        None => None,
     }
 }
 
@@ -905,14 +905,16 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
     {
         Some(handle) => {
             let path = maybe_file_path(handle);
-            handle
-                .write(source.as_bytes())
-                .await
-                .map(|_| path)
-                .map_err(|e| e)
+            Some(
+                handle
+                    .write(source.as_bytes())
+                    .await
+                    .map(|_| path)
+                    .map_err(|e| e.into()),
+            )
         }
         None => None,
-    };
+    }
 }
 
 const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
