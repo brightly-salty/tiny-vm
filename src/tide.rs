@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
@@ -104,7 +104,7 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
                     let mut output = String::new();
                     let asm = asm.trim_end_matches(' ');
 
-                    if asm.len() != 0 && comment.len() != 0 {
+                    if !asm.is_empty() && !comment.is_empty() {
                         output.push_str(asm);
                         output.push_str(&" ".repeat(rightmost_comment_position - asm.len()));
                         output.push(';');
@@ -163,7 +163,7 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
         output.response
     });
 
-    return changed;
+    changed
 }
 
 impl<'a> TabViewer for TINYTabViewer<'a> {
@@ -262,11 +262,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 
                     // Show "AAA, XXXXX" for all addresses up to the last source-mapped one
                     for i in 0..max_address {
-                        ui.monospace(format!(
-                            "{:03}, {:05}",
-                            i,
-                            cpu.memory[Address::new(i as u16)].0
-                        ));
+                        ui.monospace(format!("{:03}, {:05}", i, cpu.memory[Address::new(i)].0));
                     }
 
                     ui.group(|ui| {
@@ -416,7 +412,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 }
 
 fn default_unsaved() -> bool {
-    return true;
+    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -524,7 +520,7 @@ impl TIDE {
             cpu_state: self.cpu_state.clone(),
             running_to_completion: self.running_to_completion,
             stepping_over: self.stepping_over,
-            focus_redirect: self.focus_redirect.clone(),
+            focus_redirect: self.focus_redirect,
             input: self.input.clone(),
             input_ready: self.input_ready,
             output: self.output.clone(),
@@ -626,7 +622,7 @@ impl TIDE {
             }
         }
 
-        return AsyncFnReturn::NewFile(true);
+        AsyncFnReturn::NewFile(true)
     }
 
     async fn open_example(
@@ -907,7 +903,7 @@ async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> 
     {
         Some(handle) => Some(
             String::from_utf8(handle.read().await)
-                .and_then(|s| Ok((maybe_file_path(&handle), s)))
+                .map(|s| (maybe_file_path(&handle), s))
                 .map_err(|e| e.into()),
         ),
         None => None,
@@ -1234,7 +1230,7 @@ impl eframe::App for TIDE {
                 self.toggle_breakpoint();
             }
 
-            let mut cloned = TIDE::clone(&self);
+            let mut cloned = TIDE::clone(self);
 
             match self.focus_redirect {
                 Focus::None => {}
@@ -1273,16 +1269,12 @@ impl eframe::App for TIDE {
 
             if self.running_to_completion | self.stepping_over {
                 self.step();
-            } else {
-                if self.input_ready {
-                    match (&self.cpu_state, &self.input) {
-                        (Some(Output::WaitingForInteger), s) if s.parse::<i32>().is_ok() => {
-                            self.step()
-                        }
-                        (Some(Output::WaitingForChar), s) if s.len() == 1 => self.step(),
-                        (Some(Output::WaitingForString), _) => self.step(),
-                        _ => {}
-                    }
+            } else if self.input_ready {
+                match (&self.cpu_state, &self.input) {
+                    (Some(Output::WaitingForInteger), s) if s.parse::<i32>().is_ok() => self.step(),
+                    (Some(Output::WaitingForChar), s) if s.len() == 1 => self.step(),
+                    (Some(Output::WaitingForString), _) => self.step(),
+                    _ => {}
                 }
             }
         });
