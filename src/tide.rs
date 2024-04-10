@@ -4,7 +4,7 @@ use anyhow::Result;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
-use pollster::block_on;
+
 #[cfg(not(target_os = "macos"))]
 use rfd::FileHandle;
 use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
@@ -494,7 +494,7 @@ fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
+fn maybe_file_path(_handle: &FileHandle) -> Option<PathBuf> {
     None
 }
 
@@ -580,7 +580,7 @@ impl TIDE {
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+    async fn handle_unsaved(_save_path: Option<PathBuf>, _source: String) -> SaveFileResult {
         match AsyncMessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Some changes unsaved")
