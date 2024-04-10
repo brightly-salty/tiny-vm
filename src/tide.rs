@@ -1074,6 +1074,8 @@ impl eframe::App for TIDE {
                             tx.send(TIDE::new_file(save_path, source, unsaved).await)
                                 .expect("Couldn't send New File result");
                         });
+
+                        ui.close_menu();
                     }
 
                     if ui.button("Open").clicked() {
@@ -1086,6 +1088,8 @@ impl eframe::App for TIDE {
                             tx.send(TIDE::open_file(save_path, source, unsaved).await)
                                 .expect("Couldn't send Open File result");
                         });
+
+                        ui.close_menu();
                     }
 
                     ui.separator();
@@ -1099,6 +1103,8 @@ impl eframe::App for TIDE {
                             tx.send(TIDE::save_file(save_path, source).await)
                                 .expect("Couldn't send Save File result");
                         });
+
+                        ui.close_menu();
                     }
 
                     if ui.button("Save As").clicked() {
@@ -1109,6 +1115,8 @@ impl eframe::App for TIDE {
                             tx.send(TIDE::save_file_as(source).await)
                                 .expect("Couldn't send Save As File result");
                         });
+
+                        ui.close_menu();
                     }
 
                     ui.separator();
@@ -1167,9 +1175,13 @@ impl eframe::App for TIDE {
                             .map_err(|err| self.focused_error(&err))
                             .unwrap_or_default();
                     }
+
+                    ui.close_menu();
                 });
 
                 ui.menu_button("Debug", |ui| {
+                    // Often we want to press multiple buttons in this menu,
+                    // so we don't close it automatically when the user clicks one
                     start_pressed |= ui.button("Start").clicked();
                     run_pressed |= ui.button("Start Without Debugging").clicked();
                     stop_pressed |= ui.button("Stop").clicked();
@@ -1186,6 +1198,7 @@ impl eframe::App for TIDE {
 
                     if ui.button("About").clicked() {
                         self.about_window_open = true;
+                        ui.close_menu();
                     }
                 });
             });
