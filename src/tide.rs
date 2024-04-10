@@ -1,10 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(clippy::future_not_send)]
 
 use anyhow::Result;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
+#[cfg(not(target_arch = "wasm32"))]
+use pollster::block_on;
 #[cfg(not(target_os = "macos"))]
 use rfd::FileHandle;
 use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
@@ -37,10 +41,10 @@ enum SaveFileResult {
     Fail,
 }
 
-enum AsyncFnReturn {
-    NewFile(bool),
-    OpenFile(OpenFileResult),
-    SaveFile(SaveFileResult),
+enum ReturnAsyncFile {
+    New(bool),
+    Open(OpenFileResult),
+    Save(SaveFileResult),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -55,11 +59,9 @@ enum Focus {
 // Native
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions {
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions::default();
 
-    eframe::run_native("TIDE", options, Box::new(|cc| Box::new(TIDE::new(cc))))
+    eframe::run_native("TIDE", options, Box::new(|cc| Box::new(Tide::new(cc))))
 }
 
 // Web
@@ -72,7 +74,7 @@ fn main() {
             .start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|cc| Box::new(TIDE::new(cc))),
+                Box::new(|cc| Box::new(Tide::new(cc))),
             )
             .await
             .expect("failed to start eframe");
@@ -80,7 +82,7 @@ fn main() {
 }
 
 struct TINYTabViewer<'a> {
-    tide: &'a mut TIDE,
+    tide: &'a mut Tide,
 }
 
 fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) -> bool {
@@ -109,11 +111,10 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
                         output.push_str(&" ".repeat(rightmost_comment_position - asm.len()));
                         output.push(';');
                         output.push_str(comment);
-                        output
                     } else {
                         output.push_str(line);
-                        output
                     }
+                    output
                 }
                 None => line.into(),
             })
@@ -148,7 +149,7 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
                 for (i, line) in string.split_inclusive('\n').enumerate() {
                     match executing_line {
                         Some(l) if l == i => {
-                            layout_job.append(line, 0.0, executing_text_format.clone())
+                            layout_job.append(line, 0.0, executing_text_format.clone());
                         }
                         _ => layout_job.append(line, 0.0, default_text_format.clone()),
                     }
@@ -176,6 +177,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 
     // Defines the contents of a given `tab`.
+    #[allow(clippy::too_many_lines)]
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
@@ -220,22 +222,24 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         body.rows(15.0, num_rows, |mut row| {
                             let index = row.index();
 
+                            let address = Address::new(u16::try_from(index).unwrap());
+
                             let mut source_lines = self.tide.source.split('\n');
                             let source_line = self
                                 .tide
                                 .source_map
-                                .get(&Address(index as u16))
+                                .get(&address)
                                 .and_then(|line_num| source_lines.nth(*line_num));
 
                             row.col(|ui| {
-                                ui.label(format!("{:03}", index));
+                                ui.label(format!("{index:03}"));
                             });
 
                             if let Some(cpu) = self.tide.cpu.as_ref() {
                                 row.col(|ui| {
                                     ui.label(format!(
                                         "{:05}",
-                                        cpu.memory[Address::new(index as u16)].0
+                                        cpu.memory[address].0
                                     ));
                                 });
                             } else {
@@ -248,7 +252,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                 ui.label(source_line.unwrap_or("<empty>"));
                             });
                         });
-                    })
+                    });
             }
             "Executable" => {
                 if let Some(cpu) = self.tide.cpu.as_ref() {
@@ -257,8 +261,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .source_map
                         .iter()
                         .max_by_key(|(&address, _)| address)
-                        .map(|(a, _)| a.0)
-                        .unwrap_or(0);
+                        .map_or(0, |(a, _)| a.0);
 
                     // Show "AAA, XXXXX" for all addresses up to the last source-mapped one
                     for i in 0..max_address {
@@ -297,7 +300,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 } else {
                     ui.add_enabled_ui(false, |ui| {
                         for addr in 0..900 {
-                            ui.monospace(format!("{:03}  ?????    ", addr,));
+                            ui.monospace(format!("{addr:03}  ?????    ",));
                             ui.end_row();
                         }
                     });
@@ -312,7 +315,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 );
             }
             "Input/Output" => {
-                if let Focus::Input = self.tide.focus_redirect {
+                if matches!(self.tide.focus_redirect, Focus::Input) {
                     ui.text_edit_singleline(&mut self.tide.input)
                         .request_focus();
                 } else {
@@ -411,19 +414,20 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 }
 
-fn default_unsaved() -> bool {
+const fn default_unsaved() -> bool {
     true
 }
 
 #[derive(Serialize, Deserialize)]
-struct TIDE {
+#[allow(clippy::struct_excessive_bools)]
+struct Tide {
     source: String,
     #[serde(skip, default = "default_unsaved")]
     unsaved: bool,
     #[serde(skip)]
     save_path: Option<PathBuf>,
     #[serde(skip, default = "default_channels")]
-    channels: Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)>,
+    channels: Option<(Sender<ReturnAsyncFile>, Receiver<ReturnAsyncFile>)>,
     #[serde(skip)]
     symbols: BTreeMap<Address, String>, // Symbols
     #[serde(skip)]
@@ -460,7 +464,8 @@ struct TIDE {
     about_window_open: bool,
 }
 
-fn default_channels() -> Option<(Sender<AsyncFnReturn>, Receiver<AsyncFnReturn>)> {
+#[allow(clippy::unnecessary_wraps)]
+fn default_channels() -> Option<(Sender<ReturnAsyncFile>, Receiver<ReturnAsyncFile>)> {
     Some(std::sync::mpsc::channel())
 }
 
@@ -489,26 +494,27 @@ fn default_dock_state() -> DockState<String> {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
+#[allow(clippy::unnecessary_wraps)]
 fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
     Some(handle.path().to_owned())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn maybe_file_path(_handle: &FileHandle) -> Option<PathBuf> {
+const fn maybe_file_path(_handle: &FileHandle) -> Option<PathBuf> {
     None
 }
 
-impl TIDE {
+impl Tide {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
 
-        Default::default()
+        Self::default()
     }
 
-    fn clone(&self) -> TIDE {
-        TIDE {
+    fn clone(&self) -> Self {
+        Self {
             source: self.source.clone(),
             unsaved: self.unsaved,
             save_path: self.save_path.clone(),
@@ -566,14 +572,17 @@ impl TIDE {
             .show()
             .await
         {
-            MessageDialogResult::Yes => match TIDE::save_file(save_path, source).await {
-                AsyncFnReturn::SaveFile(r @ SaveFileResult::Saved(_)) => r,
-                AsyncFnReturn::SaveFile(r @ SaveFileResult::UnsavedCancelled) => r,
-                _ => {
-                    TIDE::save_failed_message().await;
+            MessageDialogResult::Yes => {
+                if let ReturnAsyncFile::Save(
+                    r @ (SaveFileResult::Saved(_) | SaveFileResult::UnsavedCancelled),
+                ) = Self::save_file(save_path, source).await
+                {
+                    r
+                } else {
+                    Self::save_failed_message().await;
                     SaveFileResult::Fail
                 }
-            },
+            }
             MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
             _ => SaveFileResult::UnsavedCancelled,
         }
@@ -612,17 +621,21 @@ impl TIDE {
         self.error.clear();
     }
 
-    async fn new_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
+    async fn new_file(
+        save_path: Option<PathBuf>,
+        source: String,
+        unsaved: bool,
+    ) -> ReturnAsyncFile {
         if unsaved {
-            match TIDE::handle_unsaved(save_path, source).await {
+            match Self::handle_unsaved(save_path, source).await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return AsyncFnReturn::NewFile(false)
+                    return ReturnAsyncFile::New(false)
                 }
                 _ => {}
             }
         }
 
-        AsyncFnReturn::NewFile(true)
+        ReturnAsyncFile::New(true)
     }
 
     async fn open_example(
@@ -630,34 +643,38 @@ impl TIDE {
         source: String,
         unsaved: bool,
         example_index: usize,
-    ) -> AsyncFnReturn {
+    ) -> ReturnAsyncFile {
         if unsaved {
-            match TIDE::handle_unsaved(save_path.clone(), source).await {
+            match Self::handle_unsaved(save_path.clone(), source).await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return AsyncFnReturn::OpenFile(OpenFileResult::Cancelled)
+                    return ReturnAsyncFile::Open(OpenFileResult::Cancelled)
                 }
                 _ => {}
             }
         }
 
-        AsyncFnReturn::OpenFile(OpenFileResult::Opened(
+        ReturnAsyncFile::Open(OpenFileResult::Opened(
             None,
             EXAMPLES[example_index].1.to_string(),
         ))
     }
 
-    async fn open_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
+    async fn open_file(
+        save_path: Option<PathBuf>,
+        source: String,
+        unsaved: bool,
+    ) -> ReturnAsyncFile {
         if unsaved {
-            match TIDE::handle_unsaved(save_path, source).await {
+            match Self::handle_unsaved(save_path, source).await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return AsyncFnReturn::OpenFile(OpenFileResult::Cancelled)
+                    return ReturnAsyncFile::Open(OpenFileResult::Cancelled)
                 }
                 _ => {}
             }
         }
 
         match create_pick_file_dialog().await {
-            Some(Ok((path, s))) => AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, s)),
+            Some(Ok((path, s))) => ReturnAsyncFile::Open(OpenFileResult::Opened(path, s)),
             Some(Err(e)) => {
                 AsyncMessageDialog::new()
                     .set_level(MessageLevel::Error)
@@ -666,43 +683,37 @@ impl TIDE {
                     .set_buttons(MessageButtons::Ok)
                     .show()
                     .await;
-                AsyncFnReturn::OpenFile(OpenFileResult::Fail)
+                ReturnAsyncFile::Open(OpenFileResult::Fail)
             }
-            None => AsyncFnReturn::OpenFile(OpenFileResult::Cancelled),
+            None => ReturnAsyncFile::Open(OpenFileResult::Cancelled),
         }
     }
 
-    async fn save_file(save_path: Option<PathBuf>, source: String) -> AsyncFnReturn {
-        let result = match save_path.as_ref() {
-            Some(path) => fs::write(path, source.as_bytes()),
-            None => {
-                return TIDE::save_file_as(source).await;
-            }
+    async fn save_file(save_path: Option<PathBuf>, source: String) -> ReturnAsyncFile {
+        let result = if let Some(path) = save_path.as_ref() {
+            fs::write(path, source.as_bytes())
+        } else {
+            return Self::save_file_as(source).await;
         };
 
-        match result {
-            Ok(_) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
-            Err(_) => {
-                TIDE::save_failed_message().await;
-                AsyncFnReturn::SaveFile(SaveFileResult::Fail)
-            }
+        if result.is_ok() {
+            ReturnAsyncFile::Save(SaveFileResult::Saved(save_path))
+        } else {
+            Self::save_failed_message().await;
+            ReturnAsyncFile::Save(SaveFileResult::Fail)
         }
     }
 
-    async fn save_file_as(source: String) -> AsyncFnReturn {
-        let result = match create_save_file_dialog(source).await {
-            Some(result) => result,
-            None => {
-                return AsyncFnReturn::SaveFile(SaveFileResult::UnsavedCancelled);
-            }
+    async fn save_file_as(source: String) -> ReturnAsyncFile {
+        let Some(result) = create_save_file_dialog(source).await else {
+            return ReturnAsyncFile::Save(SaveFileResult::UnsavedCancelled);
         };
 
-        match result {
-            Ok(save_path) => AsyncFnReturn::SaveFile(SaveFileResult::Saved(save_path)),
-            Err(_) => {
-                TIDE::save_failed_message().await;
-                AsyncFnReturn::SaveFile(SaveFileResult::Fail)
-            }
+        if let Ok(save_path) = result {
+            ReturnAsyncFile::Save(SaveFileResult::Saved(save_path))
+        } else {
+            Self::save_failed_message().await;
+            ReturnAsyncFile::Save(SaveFileResult::Fail)
         }
     }
 
@@ -739,15 +750,11 @@ impl TIDE {
     }
 
     fn step(&mut self) {
-        let cpu = if let Some(cpu) = self.cpu.as_mut() {
-            cpu
-        } else {
+        let Some(cpu) = self.cpu.as_mut() else {
             return;
         };
 
-        let cpu_state = if let Some(cpu_state) = self.cpu_state.as_mut() {
-            cpu_state
-        } else {
+        let Some(cpu_state) = self.cpu_state.as_mut() else {
             return;
         };
 
@@ -819,14 +826,14 @@ impl TIDE {
                 self.error.push_str("Completed");
             }
             Ok(
-                ref out @ Output::WaitingForChar
-                | ref out @ Output::WaitingForString
-                | ref out @ Output::WaitingForInteger,
+                ref out @ (Output::WaitingForChar
+                | Output::WaitingForString
+                | Output::WaitingForInteger),
             ) => {
                 self.focus_redirect = Focus::Input;
                 *cpu_state = out.clone();
             }
-            Ok(ref out @ Output::JumpedToFunction | ref out @ Output::ReturnedFromFunction) => {
+            Ok(ref out @ (Output::JumpedToFunction | Output::ReturnedFromFunction)) => {
                 self.stepping_over = false;
                 *cpu_state = out.clone();
             }
@@ -841,12 +848,13 @@ impl TIDE {
         };
     }
 
+    #[allow(clippy::unused_self)] // temporary
     fn toggle_breakpoint(&mut self) {
         //todo!();
     }
 }
 
-impl Default for TIDE {
+impl Default for Tide {
     fn default() -> Self {
         Self {
             source: String::new(),
@@ -878,19 +886,17 @@ impl Default for TIDE {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::unused_async)]
 async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
-    match rfd::FileDialog::new()
+    rfd::FileDialog::new()
         .set_title("Open file")
         .add_filter("tiny", &["tny"])
         .pick_file()
-    {
-        Some(path) => Some(
+        .map(|path| {
             std::fs::read_to_string(path.clone())
-                .map(|s| (Some(path.to_owned()), s))
-                .map_err(|e| e.into()),
-        ),
-        None => None,
-    }
+                .map(|s| (Some(path.clone()), s))
+                .map_err(Into::into)
+        })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -904,13 +910,14 @@ async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> 
         Some(handle) => Some(
             String::from_utf8(handle.read().await)
                 .map(|s| (maybe_file_path(&handle), s))
-                .map_err(|e| e.into()),
+                .map_err(Into::into),
         ),
         None => None,
     }
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::unused_async)]
 async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
     rfd::FileDialog::new()
         .set_title("Save file")
@@ -918,8 +925,8 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
         .save_file()
         .map(|path| {
             std::fs::write(path.clone(), source.as_bytes())
-                .map(|_| Some(path))
-                .map_err(|e| e.into())
+                .map(|()| Some(path))
+                .map_err(Into::into)
         })
 }
 
@@ -937,8 +944,8 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
                 handle
                     .write(source.as_bytes())
                     .await
-                    .map(|_| path)
-                    .map_err(|e| e.into()),
+                    .map(|()| path)
+                    .map_err(Into::into),
             )
         }
         None => None,
@@ -978,11 +985,12 @@ fn run_future<T: Future<Output = ()> + 'static>(f: T) {
     wasm_bindgen_futures::spawn_local(f);
 }
 
-impl eframe::App for TIDE {
+impl eframe::App for Tide {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.about_window_open {
@@ -1041,16 +1049,16 @@ impl eframe::App for TIDE {
                 .unwrap()
                 .1
                 .try_iter()
-                .collect::<Vec<AsyncFnReturn>>();
+                .collect::<Vec<ReturnAsyncFile>>();
 
             for result in results {
                 match result {
-                    AsyncFnReturn::NewFile(true) => self.reset(),
-                    AsyncFnReturn::OpenFile(OpenFileResult::Opened(path, source)) => {
+                    ReturnAsyncFile::New(true) => self.reset(),
+                    ReturnAsyncFile::Open(OpenFileResult::Opened(path, source)) => {
                         self.save_path = path;
                         self.source = source;
                     }
-                    AsyncFnReturn::SaveFile(SaveFileResult::Saved(path)) => {
+                    ReturnAsyncFile::Save(SaveFileResult::Saved(path)) => {
                         self.unsaved = false;
                         self.save_path = path;
                     }
@@ -1067,7 +1075,7 @@ impl eframe::App for TIDE {
                         let unsaved = self.unsaved;
 
                         run_future(async move {
-                            tx.send(TIDE::new_file(save_path, source, unsaved).await)
+                            tx.send(Self::new_file(save_path, source, unsaved).await)
                                 .expect("Couldn't send New File result");
                         });
 
@@ -1081,7 +1089,7 @@ impl eframe::App for TIDE {
                         let unsaved = self.unsaved;
 
                         run_future(async move {
-                            tx.send(TIDE::open_file(save_path, source, unsaved).await)
+                            tx.send(Self::open_file(save_path, source, unsaved).await)
                                 .expect("Couldn't send Open File result");
                         });
 
@@ -1096,7 +1104,7 @@ impl eframe::App for TIDE {
                         let source = self.source.clone();
 
                         run_future(async move {
-                            tx.send(TIDE::save_file(save_path, source).await)
+                            tx.send(Self::save_file(save_path, source).await)
                                 .expect("Couldn't send Save File result");
                         });
 
@@ -1108,7 +1116,7 @@ impl eframe::App for TIDE {
                         let source = self.source.clone();
 
                         run_future(async move {
-                            tx.send(TIDE::save_file_as(source).await)
+                            tx.send(Self::save_file_as(source).await)
                                 .expect("Couldn't send Save As File result");
                         });
 
@@ -1182,7 +1190,7 @@ impl eframe::App for TIDE {
 
                                 run_future(async move {
                                     tx.send(
-                                        TIDE::open_example(save_path, source, unsaved, index).await,
+                                        Self::open_example(save_path, source, unsaved, index).await,
                                     )
                                     .expect("Couldn't send Open Example result");
                                 });
@@ -1230,7 +1238,7 @@ impl eframe::App for TIDE {
                 self.toggle_breakpoint();
             }
 
-            let mut cloned = TIDE::clone(self);
+            let mut cloned = Self::clone(self);
 
             match self.focus_redirect {
                 Focus::None => {}

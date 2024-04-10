@@ -13,6 +13,8 @@
     clippy::redundant_type_annotations,
     clippy::unwrap_in_result
 )]
+#![allow(clippy::multiple_crate_versions)]
+
 mod asm;
 pub mod cpu;
 pub mod types;
