@@ -340,7 +340,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             ui.label("Accumulator");
                             ui.monospace(format!("{}", cpu.alu.acc));
 
-                            if ui.button("Edit").clicked() {
+                            if ui.add_enabled(false, egui::Button::new("Edit")).clicked() {
                                 //todo!();
                             }
 
