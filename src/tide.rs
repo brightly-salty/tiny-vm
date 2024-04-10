@@ -1119,28 +1119,6 @@ impl eframe::App for TIDE {
                         ui.close_menu();
                     }
 
-                    ui.separator();
-
-                    ui.menu_button("Examples", |ui| {
-                        for (index, &example_name) in
-                            EXAMPLES.iter().map(|(name, _)| name).enumerate()
-                        {
-                            if ui.button(example_name).clicked() {
-                                let tx = self.channels.as_mut().unwrap().0.clone();
-                                let save_path = self.save_path.clone();
-                                let source = self.source.clone();
-                                let unsaved = self.unsaved;
-
-                                run_future(async move {
-                                    tx.send(
-                                        TIDE::open_example(save_path, source, unsaved, index).await,
-                                    )
-                                    .expect("Couldn't send Open Example result");
-                                })
-                            };
-                        }
-                    });
-
                     // TODO: Submenu "Recent Files"
 
                     //ui.separator();
@@ -1195,6 +1173,31 @@ impl eframe::App for TIDE {
                     /*if ui.button("TINY Overview").clicked() {
                         todo!();
                     }*/
+
+                    ui.menu_button("Examples", |ui| {
+                        for (index, &example_name) in
+                            EXAMPLES.iter().map(|(name, _)| name).enumerate()
+                        {
+                            if ui.button(example_name).clicked() {
+                                let tx = self.channels.as_mut().unwrap().0.clone();
+                                let save_path = self.save_path.clone();
+                                let source = self.source.clone();
+                                let unsaved = self.unsaved;
+
+                                run_future(async move {
+                                    tx.send(
+                                        TIDE::open_example(save_path, source, unsaved, index).await,
+                                    )
+                                    .expect("Couldn't send Open Example result");
+                                });
+
+                                ui.close_menu();
+                                break;
+                            };
+                        }
+                    });
+
+                    ui.separator();
 
                     if ui.button("About").clicked() {
                         self.about_window_open = true;
