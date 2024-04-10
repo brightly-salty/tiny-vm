@@ -18,6 +18,12 @@ use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
 
+const EXAMPLES: [(&str, &str); 3] = [
+    ("Hello World", include_str!("../examples/helloWorld.tny")),
+    ("Box Volume", include_str!("../examples/boxVolume.tny")),
+    ("GCD", include_str!("../examples/gcd.tny")),
+];
+
 enum OpenFileResult {
     Opened(Option<PathBuf>, String),
     Cancelled,
@@ -623,6 +629,27 @@ impl TIDE {
         return AsyncFnReturn::NewFile(true);
     }
 
+    async fn open_example(
+        save_path: Option<PathBuf>,
+        source: String,
+        unsaved: bool,
+        example_index: usize,
+    ) -> AsyncFnReturn {
+        if unsaved {
+            match TIDE::handle_unsaved(save_path.clone(), source).await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return AsyncFnReturn::OpenFile(OpenFileResult::Cancelled)
+                }
+                _ => {}
+            }
+        }
+
+        AsyncFnReturn::OpenFile(OpenFileResult::Opened(
+            None,
+            EXAMPLES[example_index].1.to_string(),
+        ))
+    }
+
     async fn open_file(save_path: Option<PathBuf>, source: String, unsaved: bool) -> AsyncFnReturn {
         if unsaved {
             match TIDE::handle_unsaved(save_path, source).await {
@@ -1084,7 +1111,27 @@ impl eframe::App for TIDE {
                         });
                     }
 
-                    //ui.separator();
+                    ui.separator();
+
+                    ui.menu_button("Examples", |ui| {
+                        for (index, &example_name) in
+                            EXAMPLES.iter().map(|(name, _)| name).enumerate()
+                        {
+                            if ui.button(example_name).clicked() {
+                                let tx = self.channels.as_mut().unwrap().0.clone();
+                                let save_path = self.save_path.clone();
+                                let source = self.source.clone();
+                                let unsaved = self.unsaved;
+
+                                run_future(async move {
+                                    tx.send(
+                                        TIDE::open_example(save_path, source, unsaved, index).await,
+                                    )
+                                    .expect("Couldn't send Open Example result");
+                                })
+                            };
+                        }
+                    });
 
                     // TODO: Submenu "Recent Files"
 
@@ -1160,7 +1207,7 @@ impl eframe::App for TIDE {
 
             if step_over_pressed {
                 self.stepping_over = true;
-                self.step(); 
+                self.step();
             }
 
             if step_into_pressed {
