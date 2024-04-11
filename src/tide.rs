@@ -276,48 +276,41 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     });
                 }
             }
-            "Memory" => {
-                egui::Grid::new(8).show(ui, |ui| {
-                    if let Some(ref mut cpu) = self.tide.cpu.as_mut() {
-                        for (addr, value, chr) in (0..900)
-                            .map(|a| {
-                                (
-                                    a,
-                                    cpu.memory[Address(a)],
-                                    cpu.memory[Address(a)].read_as_char().unwrap_or(' '),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                        {
-                            ui.monospace(format!(
-                                "{:03}  {:05} {}  ",
-                                addr,
-                                value,
-                                if chr.is_ascii() { chr } else { ' ' }
-                            ))
-                            .context_menu(|ui| {
-                                ui.label(format!("Address {:03}", addr));
-                                ui.separator();
-                                ui.add(
-                                    egui::DragValue::new(&mut cpu.memory[Address(addr)].0)
-                                        .custom_formatter(|n, _| format!("{:05}", n))
-                                        .clamp_range(0..=9999),
-                                );
-                            });
+            "Memory" => TableBuilder::new(ui)
+                .striped(true)
+                .column(Column::remainder().resizable(false))
+                .body(|body| {
+                    body.rows(15.0, 900, |mut row| {
+                        let addr = row.index() as u16;
 
-                            ui.end_row();
-                        }
-                    } else {
-                        for addr in 0..900 {
-                            ui.add_enabled_ui(false, |ui| {
-                                ui.monospace(format!("{addr:03}  ?????    ",));
-                            });
+                        row.col(|ui| {
+                            if let Some(ref mut cpu) = self.tide.cpu.as_mut() {
+                                let value = cpu.memory[Address(addr)];
+                                let chr = cpu.memory[Address(addr)].read_as_char().unwrap_or(' ');
 
-                            ui.end_row();
-                        }
-                    }
-                });
-            }
+                                ui.monospace(format!(
+                                    "{:03}  {:05} {}  ",
+                                    addr,
+                                    value,
+                                    if chr.is_ascii() { chr } else { ' ' }
+                                ))
+                                .context_menu(|ui| {
+                                    ui.label(format!("Address {:03}", addr));
+                                    ui.separator();
+                                    ui.add(
+                                        egui::DragValue::new(&mut cpu.memory[Address(addr)].0)
+                                            .custom_formatter(|n, _| format!("{:05}", n))
+                                            .clamp_range(0..=9999),
+                                    );
+                                });
+                            } else {
+                                ui.add_enabled_ui(false, |ui| {
+                                    ui.monospace(format!("{addr:03}  ?????    ",));
+                                });
+                            }
+                        });
+                    });
+                }),
             "Assembly Errors" => {
                 ui.add_sized(
                     ui.available_size(),
