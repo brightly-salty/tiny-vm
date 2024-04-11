@@ -1134,6 +1134,15 @@ impl eframe::App for Tide {
                         ui.label(""); // For spacing
 
                         egui::Grid::new(6).show(ui, |ui| {
+                            ui.label("Version:");
+                            ui.label(format!(
+                                "{} on {}",
+                                env!("VERGEN_GIT_DESCRIBE"),
+                                env!("VERGEN_BUILD_DATE"),
+                            ));
+                            ui.end_row();
+                            ui.end_row();
+
                             ui.label("Designed By:");
                             ui.label("Dr. Steve Baber");
                             ui.end_row();
