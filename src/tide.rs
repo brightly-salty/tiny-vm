@@ -462,6 +462,9 @@ struct Tide {
 
     #[serde(skip)]
     about_window_open: bool,
+
+    #[serde(skip)]
+    shortcut_window_open: bool,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -533,6 +536,7 @@ impl Tide {
             error: self.error.clone(),
             dock_state: self.dock_state.clone(),
             about_window_open: self.about_window_open,
+            shortcut_window_open: self.shortcut_window_open,
         }
     }
 
@@ -881,6 +885,7 @@ impl Default for Tide {
             dock_state: default_dock_state(),
 
             about_window_open: false,
+            shortcut_window_open: false,
         }
     }
 }
@@ -952,13 +957,57 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
     }
 }
 
-const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+const NEW_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers {
+        ctrl: true,
+        shift: false,
         alt: false,
+        command: true,
+        mac_cmd: false,
+    },
+    egui::Key::N,
+);
+
+const OPEN_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
+        ctrl: true,
+        shift: false,
+        alt: false,
+        command: true,
+        mac_cmd: false,
+    },
+    egui::Key::O,
+);
+
+const SAVE_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
+        ctrl: true,
+        shift: false,
+        alt: false,
+        command: true,
+        mac_cmd: false,
+    },
+    egui::Key::S,
+);
+
+const SAVE_AS_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
         ctrl: true,
         shift: true,
+        alt: false,
+        command: true,
         mac_cmd: false,
+    },
+    egui::Key::O,
+);
+
+const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
+        ctrl: true,
+        shift: true,
+        alt: false,
         command: false,
+        mac_cmd: false,
     },
     egui::Key::B,
 );
@@ -974,6 +1023,20 @@ const STOP_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::F5);
 const BREAKPOINT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F9);
+
+const SHORTCUTS: [(&str, egui::KeyboardShortcut); 11] = [
+    ("New File", NEW_FILE_SHORTCUT),
+    ("Open File", OPEN_FILE_SHORTCUT),
+    ("Save", SAVE_FILE_SHORTCUT),
+    ("Save As", SAVE_AS_FILE_SHORTCUT),
+    ("Assemble", ASSEMBLE_SHORTCUT),
+    ("Start", START_SHORTCUT),
+    ("Start Without Debugging", RUN_SHORTCUT),
+    ("Step Over", STEP_OVER_SHORTCUT),
+    ("Step Into", STEP_INTO_SHORTCUT),
+    ("Stop", STOP_SHORTCUT),
+    ("Toggle Breakpoint", BREAKPOINT_SHORTCUT),
+];
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_future<T: Future<Output = ()> + 'static>(f: T) {
@@ -993,6 +1056,31 @@ impl eframe::App for Tide {
     #[allow(clippy::too_many_lines)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.shortcut_window_open {
+                egui::Window::new("Shortcuts")
+                    .auto_sized()
+                    .open(&mut self.shortcut_window_open)
+                    .show(ctx, |ui| {
+                        egui::Grid::new(7).show(ui, |ui| {
+                            for (action, shortcut) in SHORTCUTS {
+                                // Separate sections: File actions | Build actions | Run actions |
+                                //                    Debug actions
+                                if [ASSEMBLE_SHORTCUT, START_SHORTCUT, STEP_OVER_SHORTCUT]
+                                    .contains(&shortcut)
+                                {
+                                    ui.label(""); // Would use a separator instead but they only
+                                                  // take up one column and two of them looks ugly
+                                    ui.end_row();
+                                }
+
+                                ui.label(action);
+                                ui.label(ctx.format_shortcut(&shortcut));
+                                ui.end_row();
+                            }
+                        })
+                    });
+            }
+
             if self.about_window_open {
                 egui::Window::new("About")
                     .auto_sized()
@@ -1031,9 +1119,17 @@ impl eframe::App for Tide {
                     });
             }
 
-            // Ordering is important for stop/run/start because they *consume* shortcuts; longest
+            // Ordering is important because shortcuts are *consumed*; the longest
             // shortcuts should be checked first when the same logical key is used with
             // different modifiers
+            let mut new_file_pressed = ui.input_mut(|i| i.consume_shortcut(&NEW_FILE_SHORTCUT));
+            let mut open_file_pressed = ui.input_mut(|i| i.consume_shortcut(&OPEN_FILE_SHORTCUT));
+            let mut save_file_pressed = ui.input_mut(|i| i.consume_shortcut(&SAVE_FILE_SHORTCUT));
+            let mut save_as_file_pressed =
+                ui.input_mut(|i| i.consume_shortcut(&SAVE_AS_FILE_SHORTCUT));
+
+            let mut assemble_pressed = ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT));
+
             let mut stop_pressed = ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
             let mut run_pressed = ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
             let mut start_pressed = ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
@@ -1068,58 +1164,22 @@ impl eframe::App for Tide {
 
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("New").clicked() {
-                        let tx = self.channels.as_mut().unwrap().0.clone();
-                        let save_path = self.save_path.clone();
-                        let source = self.source.clone();
-                        let unsaved = self.unsaved;
-
-                        run_future(async move {
-                            tx.send(Self::new_file(save_path, source, unsaved).await)
-                                .expect("Couldn't send New File result");
-                        });
-
-                        ui.close_menu();
-                    }
-
-                    if ui.button("Open").clicked() {
-                        let tx = self.channels.as_mut().unwrap().0.clone();
-                        let save_path = self.save_path.clone();
-                        let source = self.source.clone();
-                        let unsaved = self.unsaved;
-
-                        run_future(async move {
-                            tx.send(Self::open_file(save_path, source, unsaved).await)
-                                .expect("Couldn't send Open File result");
-                        });
-
-                        ui.close_menu();
-                    }
+                    new_file_pressed |= ui.button("New").clicked();
+                    open_file_pressed |= ui.button("Open").clicked();
 
                     ui.separator();
 
-                    if ui.button("Save").clicked() {
-                        let tx = self.channels.as_mut().unwrap().0.clone();
-                        let save_path = self.save_path.clone();
-                        let source = self.source.clone();
+                    save_file_pressed |= ui.button("Save").clicked();
+                    save_as_file_pressed |= ui.button("Save As").clicked();
 
-                        run_future(async move {
-                            tx.send(Self::save_file(save_path, source).await)
-                                .expect("Couldn't send Save File result");
-                        });
-
-                        ui.close_menu();
-                    }
-
-                    if ui.button("Save As").clicked() {
-                        let tx = self.channels.as_mut().unwrap().0.clone();
-                        let source = self.source.clone();
-
-                        run_future(async move {
-                            tx.send(Self::save_file_as(source).await)
-                                .expect("Couldn't send Save As File result");
-                        });
-
+                    if new_file_pressed
+                        || open_file_pressed
+                        || save_file_pressed
+                        || save_as_file_pressed
+                    {
+                        // This closes the menu when we click an option, but it comes with a side effect:
+                        // if we open the menu and select nothing, then press any keybind in that
+                        // menu, it will close
                         ui.close_menu();
                     }
 
@@ -1149,34 +1209,35 @@ impl eframe::App for Tide {
                 */
 
                 ui.menu_button("Build", |ui| {
-                    if ui.button("Assemble").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT))
-                    {
-                        self.stop();
-                        self.assemble()
-                            .map_err(|err| self.focused_error(&err))
-                            .unwrap_or_default();
-
-                        ui.close_menu();
-                    }
+                    assemble_pressed |= ui.button("Assemble").clicked();
                 });
 
                 ui.menu_button("Debug", |ui| {
                     // Often we want to press multiple buttons in this menu,
                     // so we don't close it automatically when the user clicks one
-                    start_pressed |= ui.button("Start").clicked();
-                    run_pressed |= ui.button("Start Without Debugging").clicked();
-                    stop_pressed |= ui.button("Stop").clicked();
+                    start_pressed |= ui.button("Start").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
+                    run_pressed |= ui.button("Start Without Debugging").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
+                    stop_pressed |= ui.button("Stop").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
                     ui.separator();
-                    step_over_pressed |= ui.button("Step Over").clicked();
-                    step_into_pressed |= ui.button("Step Into").clicked();
-                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked();
+                    step_over_pressed |= ui.button("Step Over").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
+                    step_into_pressed |= ui.button("Step Into").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
+                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked()
+                        || ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
                 });
 
                 ui.menu_button("Help", |ui| {
                     /*if ui.button("TINY Overview").clicked() {
                         todo!();
                     }*/
+
+                    if ui.button("Shortcuts").clicked() {
+                        self.shortcut_window_open = true;
+                    }
 
                     ui.menu_button("Examples", |ui| {
                         for (index, &example_name) in
@@ -1210,11 +1271,66 @@ impl eframe::App for Tide {
                 });
             });
 
+            if new_file_pressed {
+                let tx = self.channels.as_mut().unwrap().0.clone();
+                let save_path = self.save_path.clone();
+                let source = self.source.clone();
+                let unsaved = self.unsaved;
+
+                run_future(async move {
+                    tx.send(Self::new_file(save_path, source, unsaved).await)
+                        .expect("Couldn't send New File result");
+                });
+            }
+
+            if open_file_pressed {
+                let tx = self.channels.as_mut().unwrap().0.clone();
+                let save_path = self.save_path.clone();
+                let source = self.source.clone();
+                let unsaved = self.unsaved;
+
+                run_future(async move {
+                    tx.send(Self::open_file(save_path, source, unsaved).await)
+                        .expect("Couldn't send Open File result");
+                });
+            }
+
+            if save_file_pressed {
+                let tx = self.channels.as_mut().unwrap().0.clone();
+                let save_path = self.save_path.clone();
+                let source = self.source.clone();
+
+                run_future(async move {
+                    tx.send(Self::save_file(save_path, source).await)
+                        .expect("Couldn't send Save File result");
+                });
+
+                ui.close_menu();
+            }
+
+            if save_as_file_pressed {
+                let tx = self.channels.as_mut().unwrap().0.clone();
+                let source = self.source.clone();
+
+                run_future(async move {
+                    tx.send(Self::save_file_as(source).await)
+                        .expect("Couldn't send Save As File result");
+                });
+            }
+
+            if assemble_pressed {
+                self.stop();
+                self.assemble()
+                    .map_err(|err| self.focused_error(&err))
+                    .unwrap_or_default();
+            }
+
             if start_pressed {
                 self.start()
                     .map_err(|err| self.focused_error(&err))
                     .unwrap_or_default();
             }
+
             if run_pressed {
                 self.run()
                     .map_err(|err| self.focused_error(&err))
