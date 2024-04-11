@@ -945,7 +945,7 @@ impl eframe::App for Tide {
                         egui::Grid::new(6).show(ui, |ui| {
                             ui.label("Version:");
                             ui.label(format!(
-                                "{} on {}",
+                                "{} built on {}",
                                 env!("VERGEN_GIT_DESCRIBE"),
                                 env!("VERGEN_BUILD_DATE"),
                             ));
