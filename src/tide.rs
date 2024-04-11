@@ -43,6 +43,11 @@ enum ReturnAsyncFile {
     Save(SaveFileResult),
 }
 
+#[derive(Clone, Copy)]
+struct UnappliedPreferences {
+    zoom: f32,
+}
+
 #[derive(Clone, Copy, Default)]
 enum Focus {
     #[default]
@@ -498,6 +503,9 @@ struct Tide {
 
     #[serde(skip)]
     shortcut_window_open: bool,
+
+    #[serde(skip)]
+    unapplied_preferences: Option<UnappliedPreferences>,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -562,6 +570,7 @@ impl Tide {
             dock_state: self.dock_state.clone(),
             about_window_open: self.about_window_open,
             shortcut_window_open: self.shortcut_window_open,
+            unapplied_preferences: self.unapplied_preferences,
         }
     }
 
@@ -767,6 +776,7 @@ impl Default for Tide {
 
             about_window_open: false,
             shortcut_window_open: false,
+            unapplied_preferences: None,
         }
     }
 }
@@ -864,6 +874,37 @@ impl eframe::App for Tide {
 
     #[allow(clippy::too_many_lines)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut apply_preferences = false;
+        let mut close_preferences = false;
+
+        if let Some(UnappliedPreferences { ref mut zoom }) = self.unapplied_preferences {
+            egui::Window::new("Preferences")
+                .auto_sized()
+                .show(ctx, |ui| {
+                    ui.label("Zoom");
+
+                    if ui.add(egui::Slider::new(zoom, 0.75..=3.0)).lost_focus() {
+                        apply_preferences = true;
+                    }
+
+                    egui::Grid::new(9).show(ui, |ui| {
+                        apply_preferences |= ui.button("Apply").clicked();
+                        close_preferences = ui.button("Close").clicked();
+                    });
+                });
+        }
+
+        if apply_preferences {
+            ctx.set_zoom_factor(
+                self.unapplied_preferences
+                    .map_or_else(|| 1.0, |prefs| prefs.zoom),
+            );
+        }
+
+        if close_preferences {
+            self.unapplied_preferences = None;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.shortcut_window_open {
                 egui::Window::new("Shortcuts")
@@ -1012,9 +1053,15 @@ impl eframe::App for Tide {
                     }*/
                 });
 
-                /*
                 ui.menu_button("Edit", |ui| {
-                    if ui.button("Cut").clicked() {
+                    if ui.button("Preferences").clicked() {
+                        self.unapplied_preferences = Some(UnappliedPreferences {
+                            zoom: ctx.zoom_factor(),
+                        });
+
+                        ui.close_menu();
+                    }
+                    /*if ui.button("Cut").clicked() {
                         todo!();
                     }
 
@@ -1024,9 +1071,8 @@ impl eframe::App for Tide {
 
                     if ui.button("Paste").clicked() {
                         todo!();
-                    }
+                    }*/
                 });
-                */
 
                 ui.menu_button("Build", |ui| {
                     assemble_pressed |= ui.button("Assemble").clicked();
