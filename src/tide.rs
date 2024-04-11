@@ -2,16 +2,12 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![allow(clippy::future_not_send)]
 
-use anyhow::Result;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
-use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use tiny_vm::assemble;
@@ -575,68 +571,6 @@ impl Tide {
         Ok(())
     }
 
-    #[cfg(target_arch = "wasm32")]
-    async fn save_failed_message() {
-        AsyncMessageDialog::new()
-            .set_level(MessageLevel::Error)
-            .set_title("Unable to save file")
-            .set_description("Could not save file")
-            .set_buttons(MessageButtons::Ok)
-            .show()
-            .await;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::unused_async)]
-    async fn save_failed_message() {
-        rfd::MessageDialog::new()
-            .set_level(MessageLevel::Error)
-            .set_title("Unable to save file")
-            .set_description("Could not save file")
-            .set_buttons(MessageButtons::Ok)
-            .show();
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
-        match rfd::MessageDialog::new()
-            .set_level(MessageLevel::Warning)
-            .set_title("Save changes?")
-            .set_description("Unsaved changes will be lost. Save changes?")
-            .set_buttons(MessageButtons::YesNoCancel)
-            .show()
-        {
-            MessageDialogResult::Yes => {
-                if let ReturnAsyncFile::Save(
-                    r @ (SaveFileResult::Saved(_) | SaveFileResult::UnsavedCancelled),
-                ) = Self::save_file(save_path, source).await
-                {
-                    r
-                } else {
-                    Self::save_failed_message().await;
-                    SaveFileResult::Fail
-                }
-            }
-            MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
-            _ => SaveFileResult::UnsavedCancelled,
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn handle_unsaved(_save_path: Option<PathBuf>, _source: String) -> SaveFileResult {
-        match AsyncMessageDialog::new()
-            .set_level(MessageLevel::Warning)
-            .set_title("Some changes unsaved")
-            .set_description("Unsaved changes will be lost. Continue?")
-            .set_buttons(MessageButtons::OkCancel)
-            .show()
-            .await
-        {
-            MessageDialogResult::Ok => SaveFileResult::UnsavedContinuing,
-            _ => SaveFileResult::UnsavedCancelled,
-        }
-    }
-
     fn reset(&mut self) {
         self.source.clear();
         self.unsaved = true;
@@ -653,102 +587,6 @@ impl Tide {
         self.input_ready = false;
         self.output.clear();
         self.error.clear();
-    }
-
-    async fn new_file(
-        save_path: Option<PathBuf>,
-        source: String,
-        unsaved: bool,
-    ) -> ReturnAsyncFile {
-        if unsaved {
-            match Self::handle_unsaved(save_path, source).await {
-                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return ReturnAsyncFile::New(false)
-                }
-                _ => {}
-            }
-        }
-
-        ReturnAsyncFile::New(true)
-    }
-
-    async fn open_example(
-        save_path: Option<PathBuf>,
-        source: String,
-        unsaved: bool,
-        example_index: usize,
-    ) -> ReturnAsyncFile {
-        if unsaved {
-            match Self::handle_unsaved(save_path.clone(), source).await {
-                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return ReturnAsyncFile::Open(OpenFileResult::Cancelled)
-                }
-                _ => {}
-            }
-        }
-
-        ReturnAsyncFile::Open(OpenFileResult::Opened(
-            None,
-            EXAMPLES[example_index].1.to_string(),
-        ))
-    }
-
-    async fn open_file(
-        save_path: Option<PathBuf>,
-        source: String,
-        unsaved: bool,
-    ) -> ReturnAsyncFile {
-        if unsaved {
-            match Self::handle_unsaved(save_path, source).await {
-                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
-                    return ReturnAsyncFile::Open(OpenFileResult::Cancelled)
-                }
-                _ => {}
-            }
-        }
-
-        match create_pick_file_dialog().await {
-            Some(Ok((path, s))) => ReturnAsyncFile::Open(OpenFileResult::Opened(path, s)),
-            Some(Err(e)) => {
-                AsyncMessageDialog::new()
-                    .set_level(MessageLevel::Error)
-                    .set_title("Unable to open file")
-                    .set_description(e.to_string())
-                    .set_buttons(MessageButtons::Ok)
-                    .show()
-                    .await;
-                ReturnAsyncFile::Open(OpenFileResult::Fail)
-            }
-            None => ReturnAsyncFile::Open(OpenFileResult::Cancelled),
-        }
-    }
-
-    async fn save_file(save_path: Option<PathBuf>, source: String) -> ReturnAsyncFile {
-        let result = if let Some(path) = save_path.as_ref() {
-            fs::write(path, source.as_bytes())
-        } else {
-            return Self::save_file_as(source).await;
-        };
-
-        if result.is_ok() {
-            ReturnAsyncFile::Save(SaveFileResult::Saved(save_path))
-        } else {
-            Self::save_failed_message().await;
-            ReturnAsyncFile::Save(SaveFileResult::Fail)
-        }
-    }
-
-    async fn save_file_as(source: String) -> ReturnAsyncFile {
-        let Some(result) = create_save_file_dialog(source).await else {
-            return ReturnAsyncFile::Save(SaveFileResult::UnsavedCancelled);
-        };
-
-        if let Ok(save_path) = result {
-            ReturnAsyncFile::Save(SaveFileResult::Saved(save_path))
-        } else {
-            Self::save_failed_message().await;
-            ReturnAsyncFile::Save(SaveFileResult::Fail)
-        }
     }
 
     fn focused_error(&mut self, s: &TinyError) {
@@ -922,70 +760,6 @@ impl Default for Tide {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::unused_async)]
-async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
-    rfd::FileDialog::new()
-        .set_title("Open file")
-        .add_filter("tiny", &["tny"])
-        .pick_file()
-        .map(|path| {
-            std::fs::read_to_string(path.clone())
-                .map(|s| (Some(path.clone()), s))
-                .map_err(Into::into)
-        })
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
-    match rfd::AsyncFileDialog::new()
-        .set_title("Open file")
-        .add_filter("tiny", &["tny"])
-        .pick_file()
-        .await
-    {
-        Some(handle) => Some(
-            String::from_utf8(handle.read().await)
-                .map(|s| (None, s))
-                .map_err(Into::into),
-        ),
-        None => None,
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::unused_async)]
-async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
-    rfd::FileDialog::new()
-        .set_title("Save file")
-        .add_filter("tiny", &["tny"])
-        .save_file()
-        .map(|path| {
-            std::fs::write(path.clone(), source.as_bytes())
-                .map(|()| Some(path))
-                .map_err(Into::into)
-        })
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
-    match &rfd::AsyncFileDialog::new()
-        .set_title("Save file")
-        .add_filter("tiny", &["tny"])
-        .save_file()
-        .await
-    {
-        Some(handle) => Some(
-            handle
-                .write(source.as_bytes())
-                .await
-                .map(|()| None)
-                .map_err(Into::into),
-        ),
-        None => None,
-    }
-}
-
 const NEW_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers {
         ctrl: true,
@@ -1067,13 +841,8 @@ const SHORTCUTS: [(&str, egui::KeyboardShortcut); 11] = [
     ("Toggle Breakpoint", BREAKPOINT_SHORTCUT),
 ];
 
-#[cfg(not(target_arch = "wasm32"))]
-fn run_future<T: Future<Output = ()> + 'static>(f: T) {
-    pollster::block_on(f);
-}
-
 #[cfg(target_arch = "wasm32")]
-fn run_future<T: Future<Output = ()> + 'static>(f: T) {
+fn run_future<T: std::future::Future<Output = ()> + 'static>(f: T) {
     wasm_bindgen_futures::spawn_local(f);
 }
 
@@ -1288,17 +1057,22 @@ impl eframe::App for Tide {
                         {
                             if ui.button(example_name).clicked() {
                                 let tx = self.channels.as_mut().unwrap().0.clone();
-                                let save_path = self.save_path.clone();
-                                let source = self.source.clone();
-                                let unsaved = self.unsaved;
 
+                                #[cfg(target_arch = "wasm32")]
                                 run_future(async move {
-                                    tx.send(
-                                        Self::open_example(save_path, source, unsaved, index).await,
-                                    )
+                                    tx.send(ReturnAsyncFile::Open(
+                                        web_io::open_example(unsaved, index).await,
+                                    ))
                                     .expect("Couldn't send Open Example result");
                                 });
-
+                                #[cfg(not(target_arch = "wasm32"))]
+                                tx.send(ReturnAsyncFile::Open(native_io::open_example(
+                                    self.save_path.clone(),
+                                    &self.source.clone(),
+                                    self.unsaved,
+                                    index,
+                                )))
+                                .expect("Couldn't send Open Example result");
                                 ui.close_menu();
                                 break;
                             };
@@ -1316,26 +1090,37 @@ impl eframe::App for Tide {
 
             if new_file_pressed {
                 let tx = self.channels.as_mut().unwrap().0.clone();
-                let save_path = self.save_path.clone();
-                let source = self.source.clone();
-                let unsaved = self.unsaved;
 
+                #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(Self::new_file(save_path, source, unsaved).await)
+                    tx.send(ReturnAsyncFile::New(web_io::new_file(unsaved).await))
                         .expect("Couldn't send New File result");
                 });
+                #[cfg(not(target_arch = "wasm32"))]
+                tx.send(ReturnAsyncFile::New(native_io::new_file(
+                    self.save_path.clone(),
+                    &self.source.clone(),
+                    unsaved,
+                )))
+                .expect("Couldn't send New File result");
             }
 
             if open_file_pressed {
                 let tx = self.channels.as_mut().unwrap().0.clone();
-                let save_path = self.save_path.clone();
-                let source = self.source.clone();
                 let unsaved = self.unsaved;
 
+                #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(Self::open_file(save_path, source, unsaved).await)
+                    tx.send(ReturnAsyncFile::Open(web_io::open_file(unsaved).await))
                         .expect("Couldn't send Open File result");
                 });
+                #[cfg(not(target_arch = "wasm32"))]
+                tx.send(ReturnAsyncFile::Open(native_io::open_file(
+                    self.save_path.clone(),
+                    &self.source.clone(),
+                    unsaved,
+                )))
+                .expect("Couldn't send Open File result");
             }
 
             if save_file_pressed {
@@ -1343,10 +1128,18 @@ impl eframe::App for Tide {
                 let save_path = self.save_path.clone();
                 let source = self.source.clone();
 
+                #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(Self::save_file(save_path, source).await)
-                        .expect("Couldn't send Save File result");
+                    tx.send(ReturnAsyncFile::Save(
+                        web_io::save_file(save_path, source).await,
+                    ))
+                    .expect("Couldn't send Save File result");
                 });
+                #[cfg(not(target_arch = "wasm32"))]
+                tx.send(ReturnAsyncFile::Save(native_io::save_file(
+                    save_path, &source,
+                )))
+                .expect("Couldn't send Save File result");
 
                 ui.close_menu();
             }
@@ -1355,10 +1148,14 @@ impl eframe::App for Tide {
                 let tx = self.channels.as_mut().unwrap().0.clone();
                 let source = self.source.clone();
 
+                #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(Self::save_file_as(source).await)
+                    tx.send(ReturnAsyncFile::Save(web_io::save_file_as(source).await))
                         .expect("Couldn't send Save As File result");
                 });
+                #[cfg(not(target_arch = "wasm32"))]
+                tx.send(ReturnAsyncFile::Save(native_io::save_file_as(&source)))
+                    .expect("Couldn't send Save As File result");
             }
 
             if assemble_pressed {
@@ -1448,5 +1245,297 @@ impl eframe::App for Tide {
         });
 
         ctx.request_repaint();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native_io {
+    use crate::OpenFileResult;
+    use crate::SaveFileResult;
+    use crate::EXAMPLES;
+    use anyhow::Result;
+    use rfd::FileDialog;
+    use rfd::MessageButtons;
+    use rfd::MessageDialog;
+    use rfd::MessageDialogResult;
+    use rfd::MessageLevel;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn save_failed_message() {
+        MessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title("Unable to save file")
+            .set_description("Could not save file")
+            .set_buttons(MessageButtons::Ok)
+            .show();
+    }
+
+    fn handle_unsaved(save_path: Option<PathBuf>, source: &str) -> SaveFileResult {
+        match MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("Save changes?")
+            .set_description("Unsaved changes will be lost. Save changes?")
+            .set_buttons(MessageButtons::YesNoCancel)
+            .show()
+        {
+            MessageDialogResult::Yes => {
+                let r = save_file(save_path, source);
+                match r {
+                    SaveFileResult::Saved(_) | SaveFileResult::UnsavedCancelled => r,
+                    SaveFileResult::Fail | SaveFileResult::UnsavedContinuing => {
+                        save_failed_message();
+                        SaveFileResult::Fail
+                    }
+                }
+            }
+            MessageDialogResult::No => SaveFileResult::UnsavedContinuing,
+            _ => SaveFileResult::UnsavedCancelled,
+        }
+    }
+
+    fn create_save_file_dialog(source: &str) -> Option<Result<Option<PathBuf>>> {
+        FileDialog::new()
+            .set_title("Save file")
+            .add_filter("tiny", &["tny"])
+            .save_file()
+            .map(|path| {
+                std::fs::write(path.clone(), source.as_bytes())
+                    .map(|()| Some(path))
+                    .map_err(Into::into)
+            })
+    }
+
+    pub fn new_file(save_path: Option<PathBuf>, source: &str, unsaved: bool) -> bool {
+        if unsaved {
+            match handle_unsaved(save_path, source) {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => return false,
+                _ => {}
+            }
+        }
+
+        true
+    }
+
+    pub fn open_example(
+        save_path: Option<PathBuf>,
+        source: &str,
+        unsaved: bool,
+        example_index: usize,
+    ) -> OpenFileResult {
+        if unsaved {
+            match handle_unsaved(save_path, source) {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return OpenFileResult::Cancelled
+                }
+                _ => {}
+            }
+        }
+
+        OpenFileResult::Opened(None, EXAMPLES[example_index].1.to_string())
+    }
+
+    pub fn open_file(save_path: Option<PathBuf>, source: &str, unsaved: bool) -> OpenFileResult {
+        if unsaved {
+            match handle_unsaved(save_path, source) {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return OpenFileResult::Cancelled
+                }
+                _ => {}
+            }
+        }
+        FileDialog::new()
+            .set_title("Open file")
+            .add_filter("tiny", &["tny"])
+            .pick_file()
+            .map_or(
+                OpenFileResult::Cancelled,
+                |path| match std::fs::read_to_string(path.clone()) {
+                    Ok(s) => OpenFileResult::Opened(Some(path), s),
+                    Err(e) => {
+                        MessageDialog::new()
+                            .set_level(MessageLevel::Error)
+                            .set_title("Unable to open file")
+                            .set_description(anyhow::Error::from(e).to_string())
+                            .set_buttons(MessageButtons::Ok)
+                            .show();
+                        OpenFileResult::Fail
+                    }
+                },
+            )
+    }
+
+    pub fn save_file(save_path: Option<PathBuf>, source: &str) -> SaveFileResult {
+        let result = if let Some(path) = save_path.as_ref() {
+            fs::write(path, source.as_bytes())
+        } else {
+            return save_file_as(source);
+        };
+
+        if result.is_ok() {
+            SaveFileResult::Saved(save_path)
+        } else {
+            save_failed_message();
+            SaveFileResult::Fail
+        }
+    }
+
+    pub fn save_file_as(source: &str) -> SaveFileResult {
+        let Some(result) = create_save_file_dialog(source) else {
+            return SaveFileResult::UnsavedCancelled;
+        };
+
+        result.map_or_else(
+            |_| {
+                save_failed_message();
+                SaveFileResult::Fail
+            },
+            SaveFileResult::Saved,
+        )
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod web_io {
+    use crate::OpenFileResult;
+    use crate::SaveFileResult;
+    use crate::EXAMPLES;
+    use anyhow::Error;
+    use rfd::AsyncMessageDialog;
+    use rfd::MessageButtons;
+    use rfd::MessageDialogResult;
+    use rfd::MessageLevel;
+    use std::fs;
+    use std::path::PathBuf;
+
+    async fn handle_unsaved() -> SaveFileResult {
+        match AsyncMessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("Some changes unsaved")
+            .set_description("Unsaved changes will be lost. Continue?")
+            .set_buttons(MessageButtons::OkCancel)
+            .show()
+            .await
+        {
+            MessageDialogResult::Ok => SaveFileResult::UnsavedContinuing,
+            _ => SaveFileResult::UnsavedCancelled,
+        }
+    }
+
+    async fn save_failed_message() {
+        AsyncMessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title("Unable to save file")
+            .set_description("Could not save file")
+            .set_buttons(MessageButtons::Ok)
+            .show()
+            .await;
+    }
+
+    pub async fn new_file(unsaved: bool) -> bool {
+        if unsaved {
+            match handle_unsaved().await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => return false,
+                _ => {}
+            }
+        }
+
+        true
+    }
+
+    pub async fn open_example(unsaved: bool, example_index: usize) -> OpenFileResult {
+        if unsaved {
+            match handle_unsaved().await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return OpenFileResult::Cancelled
+                }
+                _ => {}
+            }
+        }
+
+        OpenFileResult::Opened(None, EXAMPLES[example_index].1.to_string())
+    }
+
+    pub async fn open_file(unsaved: bool) -> OpenFileResult {
+        if unsaved {
+            match handle_unsaved().await {
+                SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
+                    return OpenFileResult::Cancelled
+                }
+                _ => {}
+            }
+        }
+
+        let dialog_result = match rfd::AsyncFileDialog::new()
+            .set_title("Open file")
+            .add_filter("tiny", &["tny"])
+            .pick_file()
+            .await
+        {
+            Some(handle) => Some(
+                String::from_utf8(handle.read().await)
+                    .map(|s| (None, s))
+                    .map_err(Into::<Error>::into),
+            ),
+            None => None,
+        };
+
+        match dialog_result {
+            Some(Ok((path, s))) => OpenFileResult::Opened(path, s),
+            Some(Err(e)) => {
+                AsyncMessageDialog::new()
+                    .set_level(MessageLevel::Error)
+                    .set_title("Unable to open file")
+                    .set_description(e.to_string())
+                    .set_buttons(MessageButtons::Ok)
+                    .show()
+                    .await;
+                OpenFileResult::Fail
+            }
+            None => OpenFileResult::Cancelled,
+        }
+    }
+
+    pub async fn save_file(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
+        let result = if let Some(path) = save_path.as_ref() {
+            fs::write(path, source.as_bytes())
+        } else {
+            return save_file_as(source).await;
+        };
+
+        if result.is_ok() {
+            SaveFileResult::Saved(save_path)
+        } else {
+            save_failed_message().await;
+            SaveFileResult::Fail
+        }
+    }
+
+    pub async fn save_file_as(source: String) -> SaveFileResult {
+        let dialog_result = match &rfd::AsyncFileDialog::new()
+            .set_title("Save file")
+            .add_filter("tiny", &["tny"])
+            .save_file()
+            .await
+        {
+            Some(handle) => Some(
+                handle
+                    .write(source.as_bytes())
+                    .await
+                    .map(|()| None)
+                    .map_err(Into::<Error>::into),
+            ),
+            None => None,
+        };
+        let Some(result) = dialog_result else {
+            return SaveFileResult::UnsavedCancelled;
+        };
+
+        if let Ok(save_path) = result {
+            SaveFileResult::Saved(save_path)
+        } else {
+            save_failed_message().await;
+            SaveFileResult::Fail
+        }
     }
 }
