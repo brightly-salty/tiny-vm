@@ -339,54 +339,78 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
             }
             "Registers" => {
                 ui.add_enabled_ui(self.tide.cpu.is_some(), |ui| {
-                    egui::Grid::new(1).show(ui, |ui| match &self.tide.cpu {
-                        Some(cpu) => {
-                            ui.label("Accumulator");
-                            ui.monospace(format!("{}", cpu.alu.acc));
+                    egui::Grid::new(1).show(ui, |ui| {
+                        if let Some(ref mut cpu) = &mut self.tide.cpu {
+                            ui.checkbox(&mut self.tide.editing_registers, "Editing");
+                            ui.end_row();
 
-                            if ui.add_enabled(false, egui::Button::new("Edit")).clicked() {
-                                //todo!();
+                            ui.label("Accumulator");
+
+                            if self.tide.editing_registers {
+                                ui.add(
+                                    egui::DragValue::new(&mut cpu.alu.acc.0)
+                                        .custom_formatter(|n, _| format!("{:05}", n))
+                                        .clamp_range(0..=9999),
+                                );
+                            } else {
+                                ui.monospace(format!("{}", cpu.alu.acc));
                             }
 
                             ui.end_row();
 
                             ui.label("Instruction Pointer");
-                            ui.monospace(format!("{}", cpu.cu.ip));
+
+                            if self.tide.editing_registers {
+                                ui.add(
+                                    egui::DragValue::new(&mut cpu.cu.ip.0)
+                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .clamp_range(0..=999),
+                                );
+                            } else {
+                                ui.monospace(format!("{}", cpu.cu.ip));
+                            }
+
                             ui.end_row();
 
                             ui.label("Stack Pointer");
-                            ui.monospace(format!("{}", cpu.alu.sp));
+
+                            if self.tide.editing_registers {
+                                ui.add(
+                                    egui::DragValue::new(&mut cpu.alu.sp.0)
+                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .clamp_range(0..=999),
+                                );
+                            } else {
+                                ui.monospace(format!("{}", cpu.alu.sp));
+                            }
+
                             ui.end_row();
 
                             ui.label("Base Pointer");
-                            ui.monospace(format!("{}", cpu.alu.bp));
+
+                            if self.tide.editing_registers {
+                                ui.add(
+                                    egui::DragValue::new(&mut cpu.alu.bp.0)
+                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .clamp_range(0..=999),
+                                );
+                            } else {
+                                ui.monospace(format!("{}", cpu.alu.bp));
+                            }
+
                             ui.end_row();
 
                             ui.label("Instruction Register");
-                            ui.monospace(format!("{}", cpu.cu.ir.as_byte()));
 
-                            ui.end_row();
-                        }
-                        None => {
-                            ui.label("Accumulator");
-                            ui.monospace("?????");
-                            _ = ui.button("Edit");
-                            ui.end_row();
-
-                            ui.label("Instruction Pointer");
-                            ui.monospace("???");
-                            ui.end_row();
-
-                            ui.label("Stack Pointer");
-                            ui.monospace("???");
-                            ui.end_row();
-
-                            ui.label("Base Pointer");
-                            ui.monospace("???");
-                            ui.end_row();
-
-                            ui.label("Instruction Register");
-                            ui.monospace("?????");
+                            if self.tide.editing_registers {
+                                ui.add(
+                                    egui::DragValue::new(&mut cpu.cu.ir.operand.0)
+                                        .custom_formatter(|n, _| format!("{:05}", n))
+                                        .clamp_range(0..=999),
+                                );
+                            } else {
+                                ui.monospace(format!("{}", cpu.cu.ir.as_byte()));
+                            }
 
                             ui.end_row();
                         }
@@ -447,6 +471,9 @@ struct Tide {
     running_to_completion: bool,
     #[serde(skip)]
     stepping_over: bool,
+
+    #[serde(skip)]
+    editing_registers: bool,
 
     #[serde(skip)]
     focus_redirect: Focus,
@@ -534,6 +561,7 @@ impl Tide {
             cpu_state: self.cpu_state.clone(),
             running_to_completion: self.running_to_completion,
             stepping_over: self.stepping_over,
+            editing_registers: self.editing_registers,
             focus_redirect: self.focus_redirect,
             input: self.input.clone(),
             input_ready: self.input_ready,
@@ -877,6 +905,8 @@ impl Default for Tide {
             cpu_state: None,
             running_to_completion: false,
             stepping_over: false,
+
+            editing_registers: false,
 
             focus_redirect: Focus::None,
 
@@ -1395,6 +1425,7 @@ impl eframe::App for Tide {
             self.input_ready = cloned.input_ready;
             self.cpu_state = cloned.cpu_state;
             self.focus_redirect = Focus::None;
+            self.editing_registers = cloned.editing_registers;
 
             if self.running_to_completion | self.stepping_over {
                 self.step();
