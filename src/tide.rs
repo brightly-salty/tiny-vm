@@ -81,7 +81,13 @@ struct TINYTabViewer<'a> {
     tide: &'a mut Tide,
 }
 
-fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui: &mut Ui) -> bool {
+fn text_editor(
+    s: &mut String,
+    dirty: &mut bool,
+    enabled: bool,
+    executing_line: Option<usize>,
+    ui: &mut Ui,
+) {
     let rightmost_comment_position = (s
         .split('\n')
         .map(|line| match line.split_once(';') {
@@ -120,7 +126,7 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
     // TODO: Cursor repositioning when we mess with indents
     // TODO: Toggle for automatic indent handling
 
-    let mut changed = false;
+    let previous = s.clone();
 
     ui.add_enabled(enabled, |ui: &mut Ui| {
         let output = egui::TextEdit::multiline(s)
@@ -155,12 +161,10 @@ fn text_editor(s: &mut String, enabled: bool, executing_line: Option<usize>, ui:
             })
             .show(ui);
 
-        changed = output.response.changed();
+        *dirty |= &previous != s;
 
         output.response
     });
-
-    changed
 }
 
 impl<'a> TabViewer for TINYTabViewer<'a> {
@@ -177,8 +181,9 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Source" => {
-                if text_editor(
+                text_editor(
                     &mut self.tide.source,
+                    &mut self.tide.dirty,
                     self.tide.cpu.is_none(),
                     self.tide
                         .cpu
@@ -186,9 +191,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .and_then(|cpu| self.tide.source_map.get(&cpu.cu.ip))
                         .copied(),
                     ui,
-                ) {
-                    self.tide.unsaved = true;
-                };
+                );
             }
             "Listing" => {
                 let num_rows = 900;
@@ -440,7 +443,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
     }
 }
 
-const fn default_unsaved() -> bool {
+const fn default_dirty() -> bool {
     true
 }
 
@@ -448,8 +451,8 @@ const fn default_unsaved() -> bool {
 #[allow(clippy::struct_excessive_bools)]
 struct Tide {
     source: String,
-    #[serde(skip, default = "default_unsaved")]
-    unsaved: bool,
+    #[serde(skip, default = "default_dirty")]
+    dirty: bool,
     #[serde(skip)]
     save_path: Option<PathBuf>,
     #[serde(skip, default = "default_channels")]
@@ -539,7 +542,7 @@ impl Tide {
     fn clone(&self) -> Self {
         Self {
             source: self.source.clone(),
-            unsaved: self.unsaved,
+            dirty: self.dirty,
             save_path: self.save_path.clone(),
             #[cfg(target_arch = "wasm32")]
             channels: None,
@@ -580,7 +583,7 @@ impl Tide {
 
     fn reset(&mut self) {
         self.source.clear();
-        self.unsaved = true;
+        self.dirty = true;
         self.save_path = None;
         self.symbols.clear();
         self.source_map.clear();
@@ -737,7 +740,7 @@ impl Default for Tide {
     fn default() -> Self {
         Self {
             source: String::new(),
-            unsaved: default_unsaved(),
+            dirty: default_dirty(),
             save_path: None,
             #[cfg(target_arch = "wasm32")]
             channels: default_channels(),
@@ -972,7 +975,7 @@ impl eframe::App for Tide {
                         self.source = source;
                     }
                     ReturnAsyncFile::Save(SaveFileResult::Saved(path)) => {
-                        self.unsaved = false;
+                        self.dirty = false;
                         self.save_path = path;
                     }
                     _ => {}
@@ -1066,13 +1069,13 @@ impl eframe::App for Tide {
                             EXAMPLES.iter().map(|(name, _)| name).enumerate()
                         {
                             if ui.button(example_name).clicked() {
-                                let unsaved = self.unsaved;
+                                let dirty = self.dirty;
                                 #[cfg(target_arch = "wasm32")]
                                 let tx = self.channels.as_mut().unwrap().0.clone();
                                 #[cfg(target_arch = "wasm32")]
                                 run_future(async move {
                                     tx.send(ReturnAsyncFile::Open(
-                                        web_io::open_example(unsaved, index).await,
+                                        web_io::open_example(dirty, index).await,
                                     ))
                                     .expect("Couldn't send Open Example result");
                                 });
@@ -1081,7 +1084,7 @@ impl eframe::App for Tide {
                                 if let Some(source) = native_io::open_example(
                                     &self.save_path.clone(),
                                     &self.source.clone(),
-                                    unsaved,
+                                    dirty,
                                     index,
                                 ) {
                                     self.save_path = None;
@@ -1104,34 +1107,34 @@ impl eframe::App for Tide {
             });
 
             if new_file_pressed {
-                let unsaved = self.unsaved;
+                let dirty = self.dirty;
                 #[cfg(target_arch = "wasm32")]
                 let tx = self.channels.as_mut().unwrap().0.clone();
                 #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(ReturnAsyncFile::New(web_io::new_file(unsaved).await))
+                    tx.send(ReturnAsyncFile::New(web_io::new_file(dirty).await))
                         .expect("Couldn't send New File result");
                 });
 
                 #[cfg(not(target_arch = "wasm32"))]
-                if native_io::new_file(&self.save_path.clone(), &self.source.clone(), unsaved) {
+                if native_io::new_file(&self.save_path.clone(), &self.source.clone(), dirty) {
                     self.reset();
                 }
             }
 
             if open_file_pressed {
-                let unsaved = self.unsaved;
+                let dirty = self.dirty;
                 #[cfg(target_arch = "wasm32")]
                 let tx = self.channels.as_mut().unwrap().0.clone();
                 #[cfg(target_arch = "wasm32")]
                 run_future(async move {
-                    tx.send(ReturnAsyncFile::Open(web_io::open_file(unsaved).await))
+                    tx.send(ReturnAsyncFile::Open(web_io::open_file(dirty).await))
                         .expect("Couldn't send Open File result");
                 });
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some((path, source)) =
-                    native_io::open_file(&self.save_path.clone(), &self.source.clone(), unsaved)
+                    native_io::open_file(&self.save_path.clone(), &self.source.clone(), dirty)
                 {
                     self.save_path = Some(path);
                     self.source = source;
@@ -1155,7 +1158,7 @@ impl eframe::App for Tide {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = native_io::save_file(save_path, &source) {
-                    self.unsaved = false;
+                    self.dirty = false;
                     self.save_path = Some(path);
                 }
 
@@ -1175,7 +1178,7 @@ impl eframe::App for Tide {
                 });
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = native_io::save_file_as(&source) {
-                    self.unsaved = false;
+                    self.dirty = false;
                     self.save_path = Some(path);
                 }
             }
@@ -1253,6 +1256,7 @@ impl eframe::App for Tide {
             self.cpu_state = cloned.cpu_state;
             self.focus_redirect = Focus::None;
             self.editing_registers = cloned.editing_registers;
+            self.dirty = cloned.dirty;
 
             if self.running_to_completion | self.stepping_over {
                 self.step();
@@ -1291,7 +1295,7 @@ mod native_io {
     }
 
     // Returns false if it was cancelled or failed
-    fn handle_unsaved(save_path: &Option<PathBuf>, source: &str) -> bool {
+    fn handle_dirty(save_path: &Option<PathBuf>, source: &str) -> bool {
         match MessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Save changes?")
@@ -1329,17 +1333,17 @@ mod native_io {
         }
     }
 
-    pub fn new_file(save_path: &Option<PathBuf>, source: &str, unsaved: bool) -> bool {
-        !unsaved || handle_unsaved(save_path, source) // DeMorgan's Law
+    pub fn new_file(save_path: &Option<PathBuf>, source: &str, dirty: bool) -> bool {
+        !dirty || handle_dirty(save_path, source) // DeMorgan's Law
     }
 
     pub fn open_example(
         save_path: &Option<PathBuf>,
         source: &str,
-        unsaved: bool,
+        dirty: bool,
         example_index: usize,
     ) -> Option<String> {
-        if unsaved && !handle_unsaved(save_path, source) {
+        if dirty && !handle_dirty(save_path, source) {
             return None;
         }
 
@@ -1349,9 +1353,9 @@ mod native_io {
     pub fn open_file(
         save_path: &Option<PathBuf>,
         source: &str,
-        unsaved: bool,
+        dirty: bool,
     ) -> Option<(PathBuf, String)> {
-        if unsaved && !handle_unsaved(save_path, source) {
+        if dirty && !handle_dirty(save_path, source) {
             return None;
         }
 
@@ -1417,7 +1421,7 @@ mod web_io {
     use std::fs;
     use std::path::PathBuf;
 
-    async fn handle_unsaved() -> SaveFileResult {
+    async fn handle_dirty() -> SaveFileResult {
         match AsyncMessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Some changes unsaved")
@@ -1441,9 +1445,9 @@ mod web_io {
             .await;
     }
 
-    pub async fn new_file(unsaved: bool) -> bool {
-        if unsaved {
-            match handle_unsaved().await {
+    pub async fn new_file(dirty: bool) -> bool {
+        if dirty {
+            match handle_dirty().await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => return false,
                 _ => {}
             }
@@ -1452,9 +1456,9 @@ mod web_io {
         true
     }
 
-    pub async fn open_example(unsaved: bool, example_index: usize) -> OpenFileResult {
-        if unsaved {
-            match handle_unsaved().await {
+    pub async fn open_example(dirty: bool, example_index: usize) -> OpenFileResult {
+        if dirty {
+            match handle_dirty().await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
                     return OpenFileResult::Cancelled
                 }
@@ -1465,9 +1469,9 @@ mod web_io {
         OpenFileResult::Opened(None, EXAMPLES[example_index].1.to_string())
     }
 
-    pub async fn open_file(unsaved: bool) -> OpenFileResult {
-        if unsaved {
-            match handle_unsaved().await {
+    pub async fn open_file(dirty: bool) -> OpenFileResult {
+        if dirty {
+            match handle_dirty().await {
                 SaveFileResult::UnsavedCancelled | SaveFileResult::Fail => {
                     return OpenFileResult::Cancelled
                 }
