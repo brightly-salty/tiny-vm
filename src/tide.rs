@@ -1245,6 +1245,10 @@ impl eframe::App for Tide {
 
                 ui.menu_button("Build", |ui| {
                     assemble_pressed |= ui.button("Assemble").clicked();
+
+                    if assemble_pressed {
+                        ui.close_menu();
+                    }
                 });
 
                 ui.menu_button("Debug", |ui| {
@@ -1272,6 +1276,7 @@ impl eframe::App for Tide {
 
                     if ui.button("Shortcuts").clicked() {
                         self.shortcut_window_open = true;
+                        ui.close_menu();
                     }
 
                     ui.menu_button("Examples", |ui| {
