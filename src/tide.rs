@@ -232,24 +232,21 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                 .and_then(|line_num| source_lines.nth(*line_num));
 
                             row.col(|ui| {
-                                ui.label(format!("{index:03}"));
+                                ui.monospace(format!("{index:03}"));
                             });
 
-                            if let Some(cpu) = self.tide.cpu.as_ref() {
-                                row.col(|ui| {
-                                    ui.label(format!(
-                                        "{:05}",
-                                        cpu.memory[address].0
-                                    ));
-                                });
-                            } else {
-                                row.col(|ui| {
-                                    ui.label("?????");
-                                });
-                            }
+                            row.col(|ui| {
+                                ui.monospace(
+                                    self.tide
+                                        .cpu
+                                        .as_ref()
+                                        .map(|cpu| format!("{:05}", cpu.memory[address].0))
+                                        .unwrap_or("?????".to_owned()),
+                                );
+                            });
 
                             row.col(|ui| {
-                                ui.label(source_line.unwrap_or("<empty>"));
+                                ui.monospace(source_line.unwrap_or("<empty>"));
                             });
                         });
                     });
