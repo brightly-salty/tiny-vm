@@ -300,7 +300,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                     ui.add(
                                         egui::DragValue::new(&mut cpu.memory[Address(addr)].0)
                                             .custom_formatter(|n, _| format!("{:05}", n))
-                                            .clamp_range(0..=9999),
+                                            .clamp_range(-99999..=99999),
                                     );
                                 });
                             } else {
@@ -350,7 +350,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.alu.acc.0)
                                         .custom_formatter(|n, _| format!("{:05}", n))
-                                        .clamp_range(0..=9999),
+                                        .clamp_range(-99999..=99999),
                                 );
                             } else {
                                 ui.monospace(format!("{}", cpu.alu.acc));
@@ -404,8 +404,14 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 
                             if self.tide.editing_registers {
                                 ui.add(
+                                    egui::DragValue::new(&mut cpu.cu.ir.opcode.0)
+                                        .custom_formatter(|n, _| format!("{:02}", n))
+                                        .clamp_range(0..=99),
+                                );
+
+                                ui.add(
                                     egui::DragValue::new(&mut cpu.cu.ir.operand.0)
-                                        .custom_formatter(|n, _| format!("{:05}", n))
+                                        .custom_formatter(|n, _| format!("{:03}", n))
                                         .clamp_range(0..=999),
                                 );
                             } else {
