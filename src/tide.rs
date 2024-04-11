@@ -7,10 +7,6 @@ use eframe::egui::{Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
-#[cfg(not(target_arch = "wasm32"))]
-use pollster::block_on;
-#[cfg(not(target_os = "macos"))]
-use rfd::FileHandle;
 use rfd::{AsyncMessageDialog, MessageButtons, MessageDialogResult, MessageLevel};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -236,13 +232,10 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             });
 
                             row.col(|ui| {
-                                ui.monospace(
-                                    self.tide
-                                        .cpu
-                                        .as_ref()
-                                        .map(|cpu| format!("{:05}", cpu.memory[address].0))
-                                        .unwrap_or("?????".to_owned()),
-                                );
+                                ui.monospace(self.tide.cpu.as_ref().map_or_else(
+                                    || "?????".to_owned(),
+                                    |cpu| format!("{:05}", cpu.memory[address].0),
+                                ));
                             });
 
                             row.col(|ui| {
@@ -281,7 +274,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                 .column(Column::remainder().resizable(false))
                 .body(|body| {
                     body.rows(15.0, 900, |mut row| {
-                        let addr = row.index() as u16;
+                        let addr = u16::try_from(row.index()).unwrap();
 
                         row.col(|ui| {
                             if let Some(ref mut cpu) = self.tide.cpu.as_mut() {
@@ -289,17 +282,15 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                                 let chr = cpu.memory[Address(addr)].read_as_char().unwrap_or(' ');
 
                                 ui.monospace(format!(
-                                    "{:03}  {:05} {}  ",
-                                    addr,
-                                    value,
+                                    "{addr:03}  {value:05} {}  ",
                                     if chr.is_ascii() { chr } else { ' ' }
                                 ))
                                 .context_menu(|ui| {
-                                    ui.label(format!("Address {:03}", addr));
+                                    ui.label(format!("Address {addr:03}"));
                                     ui.separator();
                                     ui.add(
                                         egui::DragValue::new(&mut cpu.memory[Address(addr)].0)
-                                            .custom_formatter(|n, _| format!("{:05}", n))
+                                            .custom_formatter(|n, _| format!("{n:05}"))
                                             .clamp_range(-99999..=99999),
                                     );
                                 });
@@ -349,7 +340,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             if self.tide.editing_registers {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.alu.acc.0)
-                                        .custom_formatter(|n, _| format!("{:05}", n))
+                                        .custom_formatter(|n, _| format!("{n:05}"))
                                         .clamp_range(-99999..=99999),
                                 );
                             } else {
@@ -363,7 +354,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             if self.tide.editing_registers {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.cu.ip.0)
-                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .custom_formatter(|n, _| format!("{n:03}"))
                                         .clamp_range(0..=999),
                                 );
                             } else {
@@ -377,7 +368,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             if self.tide.editing_registers {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.alu.sp.0)
-                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .custom_formatter(|n, _| format!("{n:03}"))
                                         .clamp_range(0..=999),
                                 );
                             } else {
@@ -391,7 +382,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             if self.tide.editing_registers {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.alu.bp.0)
-                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .custom_formatter(|n, _| format!("{n:03}"))
                                         .clamp_range(0..=999),
                                 );
                             } else {
@@ -405,13 +396,13 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             if self.tide.editing_registers {
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.cu.ir.opcode.0)
-                                        .custom_formatter(|n, _| format!("{:02}", n))
+                                        .custom_formatter(|n, _| format!("{n:02}"))
                                         .clamp_range(0..=99),
                                 );
 
                                 ui.add(
                                     egui::DragValue::new(&mut cpu.cu.ir.operand.0)
-                                        .custom_formatter(|n, _| format!("{:03}", n))
+                                        .custom_formatter(|n, _| format!("{n:03}"))
                                         .clamp_range(0..=999),
                                 );
                             } else {
@@ -534,17 +525,6 @@ fn default_dock_state() -> DockState<String> {
     dock_state
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
-#[allow(clippy::unnecessary_wraps)]
-fn maybe_file_path(handle: &FileHandle) -> Option<PathBuf> {
-    Some(handle.path().to_owned())
-}
-
-#[cfg(target_arch = "wasm32")]
-const fn maybe_file_path(_handle: &FileHandle) -> Option<PathBuf> {
-    None
-}
-
 impl Tide {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(storage) = cc.storage {
@@ -595,6 +575,7 @@ impl Tide {
         Ok(())
     }
 
+    #[cfg(target_arch = "wasm32")]
     async fn save_failed_message() {
         AsyncMessageDialog::new()
             .set_level(MessageLevel::Error)
@@ -606,14 +587,24 @@ impl Tide {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::unused_async)]
+    async fn save_failed_message() {
+        rfd::MessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title("Unable to save file")
+            .set_description("Could not save file")
+            .set_buttons(MessageButtons::Ok)
+            .show();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     async fn handle_unsaved(save_path: Option<PathBuf>, source: String) -> SaveFileResult {
-        match AsyncMessageDialog::new()
+        match rfd::MessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Save changes?")
             .set_description("Unsaved changes will be lost. Save changes?")
             .set_buttons(MessageButtons::YesNoCancel)
             .show()
-            .await
         {
             MessageDialogResult::Yes => {
                 if let ReturnAsyncFile::Save(
@@ -931,7 +922,7 @@ impl Default for Tide {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::unused_async)]
 async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
     rfd::FileDialog::new()
@@ -945,7 +936,7 @@ async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> 
         })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_arch = "wasm32")]
 async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> {
     match rfd::AsyncFileDialog::new()
         .set_title("Open file")
@@ -955,14 +946,14 @@ async fn create_pick_file_dialog() -> Option<Result<(Option<PathBuf>, String)>> 
     {
         Some(handle) => Some(
             String::from_utf8(handle.read().await)
-                .map(|s| (maybe_file_path(&handle), s))
+                .map(|s| (None, s))
                 .map_err(Into::into),
         ),
         None => None,
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::unused_async)]
 async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
     rfd::FileDialog::new()
@@ -976,7 +967,7 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
         })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_arch = "wasm32")]
 async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf>>> {
     match &rfd::AsyncFileDialog::new()
         .set_title("Save file")
@@ -984,16 +975,13 @@ async fn create_save_file_dialog(source: String) -> Option<Result<Option<PathBuf
         .save_file()
         .await
     {
-        Some(handle) => {
-            let path = maybe_file_path(handle);
-            Some(
-                handle
-                    .write(source.as_bytes())
-                    .await
-                    .map(|()| path)
-                    .map_err(Into::into),
-            )
-        }
+        Some(handle) => Some(
+            handle
+                .write(source.as_bytes())
+                .await
+                .map(|()| None)
+                .map_err(Into::into),
+        ),
         None => None,
     }
 }
@@ -1081,7 +1069,7 @@ const SHORTCUTS: [(&str, egui::KeyboardShortcut); 11] = [
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_future<T: Future<Output = ()> + 'static>(f: T) {
-    block_on(f);
+    pollster::block_on(f);
 }
 
 #[cfg(target_arch = "wasm32")]
