@@ -44,9 +44,7 @@ enum ReturnAsyncFile {
 }
 
 #[derive(Clone, Copy)]
-struct UnappliedPreferences {
-    zoom: f32,
-}
+struct UnappliedPreferences;
 
 #[derive(Clone, Copy, Default)]
 enum Focus {
@@ -882,10 +880,9 @@ impl eframe::App for Tide {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
-        let mut apply_preferences = false;
         let mut close_preferences = false;
 
-        if let Some(UnappliedPreferences { ref mut zoom }) = self.unapplied_preferences {
+        if let Some(UnappliedPreferences) = self.unapplied_preferences {
             egui::Window::new("Preferences")
                 .auto_sized()
                 .show(ctx, |ui| {
@@ -894,27 +891,8 @@ impl eframe::App for Tide {
                         egui::global_dark_light_mode_buttons(ui);
                     });
 
-                    ui.group(|ui| {
-                        ui.label("Zoom");
-
-                        if ui.add(egui::Slider::new(zoom, 0.75..=3.0)).lost_focus() {
-                            apply_preferences = true;
-                        }
-
-                        egui::Grid::new(9).show(ui, |ui| {
-                            apply_preferences |= ui.button("Apply").clicked();
-                        });
-                    });
-
                     close_preferences = ui.button("Close").clicked();
                 });
-        }
-
-        if apply_preferences {
-            ctx.set_zoom_factor(
-                self.unapplied_preferences
-                    .map_or_else(|| 1.0, |prefs| prefs.zoom),
-            );
         }
 
         if close_preferences {
@@ -1069,12 +1047,11 @@ impl eframe::App for Tide {
 
                 ui.menu_button("Edit", |ui| {
                     if ui.button("Preferences").clicked() {
-                        self.unapplied_preferences = Some(UnappliedPreferences {
-                            zoom: ctx.zoom_factor(),
-                        });
+                        self.unapplied_preferences = Some(UnappliedPreferences);
 
                         ui.close_menu();
                     }
+
                     /*if ui.button("Cut").clicked() {
                         todo!();
                     }
@@ -1086,6 +1063,10 @@ impl eframe::App for Tide {
                     if ui.button("Paste").clicked() {
                         todo!();
                     }*/
+                });
+
+                ui.menu_button("View", |ui| {
+                    egui::gui_zoom::zoom_menu_buttons(ui);
                 });
 
                 ui.menu_button("Build", |ui| {
