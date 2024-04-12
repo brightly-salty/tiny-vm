@@ -270,7 +270,6 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         ui.label("Symbol table");
                         ui.separator();
 
-                        // Symbol table here
                         for address in self.tide.symbols.keys() {
                             ui.monospace(format!("{:03}, {}", address, self.tide.symbols[address]));
                         }
