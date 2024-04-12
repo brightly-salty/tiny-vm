@@ -455,6 +455,7 @@ const fn default_dirty() -> bool {
 #[derive(Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 struct Tide {
+    #[cfg_attr(not(target_arch = "wasm32"), serde(skip))]
     source: String,
     #[serde(skip, default = "default_dirty")]
     dirty: bool,
