@@ -881,16 +881,24 @@ impl eframe::App for Tide {
             egui::Window::new("Preferences")
                 .auto_sized()
                 .show(ctx, |ui| {
-                    ui.label("Zoom");
-
-                    if ui.add(egui::Slider::new(zoom, 0.75..=3.0)).lost_focus() {
-                        apply_preferences = true;
-                    }
-
-                    egui::Grid::new(9).show(ui, |ui| {
-                        apply_preferences |= ui.button("Apply").clicked();
-                        close_preferences = ui.button("Close").clicked();
+                    ui.group(|ui| {
+                        ui.label("Theme");
+                        egui::global_dark_light_mode_buttons(ui);
                     });
+
+                    ui.group(|ui| {
+                        ui.label("Zoom");
+
+                        if ui.add(egui::Slider::new(zoom, 0.75..=3.0)).lost_focus() {
+                            apply_preferences = true;
+                        }
+
+                        egui::Grid::new(9).show(ui, |ui| {
+                            apply_preferences |= ui.button("Apply").clicked();
+                        });
+                    });
+
+                    close_preferences = ui.button("Close").clicked();
                 });
         }
 
