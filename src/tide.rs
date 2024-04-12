@@ -954,13 +954,11 @@ impl eframe::App for Tide {
                     .show(ctx, |ui| {
                         ui.label(
                             egui::RichText::new("Tiny Integrated Development Environment")
-                                .size(30.0),
+                                .size(24.0),
                         );
-                        ui.label(""); // For spacing
 
                         egui::Grid::new(6).show(ui, |ui| {
-                            ui.label("Version:");
-                            ui.label(format!(
+                            ui.weak(format!(
                                 "{} built on {}",
                                 env!("VERGEN_GIT_DESCRIBE"),
                                 env!("VERGEN_BUILD_DATE"),
