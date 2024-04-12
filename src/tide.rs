@@ -55,6 +55,46 @@ enum Focus {
     Output,
 }
 
+fn ascii_char(c: u8) -> String {
+    match c {
+        0 => "NUL".to_owned(),
+        1 => "SOH".to_owned(),
+        2 => "STX".to_owned(),
+        3 => "ETX".to_owned(),
+        4 => "EOT".to_owned(),
+        5 => "ENQ".to_owned(),
+        6 => "ACK".to_owned(),
+        7 => "BEL".to_owned(),
+        8 => "BS".to_owned(),
+        9 => "HT".to_owned(),
+        10 => "LF".to_owned(),
+        11 => "VT".to_owned(),
+        12 => "FF".to_owned(),
+        13 => "CR".to_owned(),
+        14 => "SO".to_owned(),
+        15 => "SI".to_owned(),
+        16 => "DLE".to_owned(),
+        17 => "DC1".to_owned(),
+        18 => "DC2".to_owned(),
+        19 => "DC3".to_owned(),
+        20 => "DC4".to_owned(),
+        21 => "NAK".to_owned(),
+        22 => "SYN".to_owned(),
+        23 => "ETB".to_owned(),
+        24 => "CAN".to_owned(),
+        25 => "EM".to_owned(),
+        26 => "SUB".to_owned(),
+        27 => "ESC".to_owned(),
+        28 => "FS".to_owned(),
+        29 => "GS".to_owned(),
+        30 => "RS".to_owned(),
+        31 => "US".to_owned(),
+        32 => "SP".to_owned(),
+        127 => "DEL".to_owned(),
+        c => String::from_utf8_lossy(&[c]).into_owned(),
+    }
+}
+
 // Native
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
@@ -503,6 +543,9 @@ struct Tide {
     shortcut_window_open: bool,
 
     #[serde(skip)]
+    ascii_window_open: bool,
+
+    #[serde(skip)]
     unapplied_preferences: Option<UnappliedPreferences>,
 }
 
@@ -568,6 +611,7 @@ impl Tide {
             dock_state: self.dock_state.clone(),
             about_window_open: self.about_window_open,
             shortcut_window_open: self.shortcut_window_open,
+            ascii_window_open: self.ascii_window_open,
             unapplied_preferences: self.unapplied_preferences,
         }
     }
@@ -774,6 +818,7 @@ impl Default for Tide {
 
             about_window_open: false,
             shortcut_window_open: false,
+            ascii_window_open: false,
             unapplied_preferences: None,
         }
     }
@@ -970,6 +1015,27 @@ impl eframe::App for Tide {
                     });
             }
 
+            if self.ascii_window_open {
+                egui::Window::new("ASCII Table")
+                    .auto_sized()
+                    .open(&mut self.ascii_window_open)
+                    .show(ctx, |ui| {
+                        for row in 0..32 {
+                            ui.horizontal(|ui| {
+                                for column in 0..4 {
+                                    let index = row + 32 * column;
+
+                                    ui.monospace(format!("{:<4} {:<3}", index, ascii_char(index)));
+
+                                    if column != 3 {
+                                        ui.separator();
+                                    }
+                                }
+                            });
+                        }
+                    });
+            }
+
             // Ordering is important because shortcuts are *consumed*; the longest
             // shortcuts should be checked first when the same logical key is used with
             // different modifiers
@@ -1137,6 +1203,11 @@ impl eframe::App for Tide {
                             };
                         }
                     });
+
+                    if ui.button("ASCII Table").clicked() {
+                        self.ascii_window_open = true;
+                        ui.close_menu();
+                    }
 
                     ui.separator();
 
