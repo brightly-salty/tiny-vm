@@ -3,9 +3,6 @@
 ## Phase 1: Feature parity with TIDE.exe
 
 - breakpoints
-- add shortcuts to full menubar
-- help menu option
-- add step over/step into
 
 ## Phase 2: Internal refactoring for performance and clarity
 
