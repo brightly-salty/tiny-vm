@@ -874,6 +874,14 @@ impl eframe::App for Tide {
 
     #[allow(clippy::too_many_lines)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.dirty
+            && !native_io::handle_dirty(&self.save_path, &self.source)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+
         let mut apply_preferences = false;
         let mut close_preferences = false;
 
@@ -1349,7 +1357,7 @@ mod native_io {
     }
 
     // Returns false if it was cancelled or failed
-    fn handle_dirty(save_path: &Option<PathBuf>, source: &str) -> bool {
+    pub fn handle_dirty(save_path: &Option<PathBuf>, source: &str) -> bool {
         match MessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Save changes?")
