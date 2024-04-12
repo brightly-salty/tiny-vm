@@ -449,7 +449,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
 }
 
 const fn default_dirty() -> bool {
-    true
+    cfg!(target_arch = "wasm32")
 }
 
 #[derive(Serialize, Deserialize)]
