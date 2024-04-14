@@ -865,7 +865,7 @@ const SAVE_AS_FILE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::ne
         command: true,
         mac_cmd: false,
     },
-    egui::Key::O,
+    egui::Key::S,
 );
 
 const ASSEMBLE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
@@ -1041,9 +1041,9 @@ impl eframe::App for Tide {
             // different modifiers
             let mut new_file_pressed = ui.input_mut(|i| i.consume_shortcut(&NEW_FILE_SHORTCUT));
             let mut open_file_pressed = ui.input_mut(|i| i.consume_shortcut(&OPEN_FILE_SHORTCUT));
-            let mut save_file_pressed = ui.input_mut(|i| i.consume_shortcut(&SAVE_FILE_SHORTCUT));
             let mut save_as_file_pressed =
                 ui.input_mut(|i| i.consume_shortcut(&SAVE_AS_FILE_SHORTCUT));
+            let mut save_file_pressed = ui.input_mut(|i| i.consume_shortcut(&SAVE_FILE_SHORTCUT));
 
             let mut assemble_pressed = ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT));
 
