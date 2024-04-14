@@ -927,7 +927,7 @@ impl eframe::App for Tide {
 
         let mut close_preferences = false;
 
-        if let Some(UnappliedPreferences) = self.unapplied_preferences {
+        if matches!(self.unapplied_preferences, Some(UnappliedPreferences)) {
             egui::Window::new("Preferences")
                 .auto_sized()
                 .show(ctx, |ui| {
