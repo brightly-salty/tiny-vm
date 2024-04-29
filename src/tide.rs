@@ -3,11 +3,12 @@
 #![allow(clippy::future_not_send)]
 
 use eframe::egui::{Ui, WidgetText};
+use egui::text_selection::CursorRange;
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{Receiver, Sender};
@@ -129,6 +130,7 @@ fn text_editor(
     dirty: &mut bool,
     enabled: bool,
     executing_line: Option<usize>,
+    cursor_range: &mut Option<CursorRange>,
     ui: &mut Ui,
 ) {
     let rightmost_comment_position = (s
@@ -206,6 +208,8 @@ fn text_editor(
 
         *dirty |= &previous != s;
 
+        *cursor_range = output.cursor_range;
+
         output.response
     });
 }
@@ -233,6 +237,7 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .as_ref()
                         .and_then(|cpu| self.tide.source_map.get(&cpu.cu.ip))
                         .copied(),
+                    &mut self.tide.source_cursor,
                     ui,
                 );
             }
@@ -506,7 +511,7 @@ struct Tide {
     #[serde(skip)]
     source_map: HashMap<Address, usize>,
     #[serde(skip)]
-    breakpoints: Vec<u16>, // Indices of lines (TODO)
+    breakpoints: HashSet<u16>, // Indices of lines
     #[serde(skip)]
     cpu: Option<Cpu>,
     #[serde(skip)]
@@ -515,6 +520,9 @@ struct Tide {
     running_to_completion: bool,
     #[serde(skip)]
     stepping_over: bool,
+
+    #[serde(skip)]
+    source_cursor: Option<CursorRange>,
 
     #[serde(skip)]
     editing_registers: bool,
@@ -602,6 +610,7 @@ impl Tide {
             cpu_state: self.cpu_state.clone(),
             running_to_completion: self.running_to_completion,
             stepping_over: self.stepping_over,
+            source_cursor: self.source_cursor.clone(),
             editing_registers: self.editing_registers,
             focus_redirect: self.focus_redirect,
             input: self.input.clone(),
@@ -682,16 +691,16 @@ impl Tide {
         self.symbols.clear();
     }
 
-    fn step(&mut self) {
+    fn handle_input(&mut self) -> Option<Result<Output, TinyError>> {
         let Some(cpu) = self.cpu.as_mut() else {
-            return;
+            return None;
         };
 
         let Some(cpu_state) = self.cpu_state.as_mut() else {
-            return;
+            return None;
         };
 
-        let result = match cpu_state {
+        match cpu_state {
             Output::WaitingForString => {
                 if self.input_ready {
                     let result = cpu.step(Input::String(self.input.clone()));
@@ -699,9 +708,9 @@ impl Tide {
                     self.output.push('\n');
                     self.input.clear();
                     self.input_ready = false;
-                    result
+                    Some(result)
                 } else {
-                    return;
+                    None
                 }
             }
             Output::WaitingForChar => {
@@ -711,9 +720,9 @@ impl Tide {
                     self.output.push(c);
                     self.output.push('\n');
                     self.input_ready = false;
-                    result
+                    Some(result)
                 } else {
-                    return;
+                    None
                 }
             }
             Output::WaitingForInteger => {
@@ -725,23 +734,55 @@ impl Tide {
                             self.output.push('\n');
                             self.input.clear();
                             self.input_ready = false;
-                            result
+                            Some(result)
                         }
-                        Err(_) => return,
+                        Err(_) => None,
                     }
                 } else {
+                    None
+                }
+            }
+            Output::JumpedToFunction if self.stepping_over => match cpu.step(Input::None) {
+                Ok(
+                    Output::JumpedToFunction | Output::ReturnedFromFunction | Output::ReadyToCycle,
+                ) => self.handle_input(),
+                v => Some(v),
+            },
+            Output::ReadyToCycle | Output::ReturnedFromFunction => Some(cpu.step(Input::None)),
+
+            _ => None,
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn step(&mut self) {
+        // Stop running on a breakpoint: skip this step() and allow future ones
+        if self.running_to_completion {
+            if let Some(cpu) = self.cpu.as_ref() {
+                // Safety: code can't exceed 1000 lines, so won't exceed 65535
+                #[allow(clippy::cast_possible_truncation)]
+                if self
+                    .source_map
+                    .get(&cpu.cu.ip)
+                    .map_or_else(|| false, |line| self.breakpoints.contains(&(*line as u16)))
+                {
+                    self.running_to_completion = false;
+                    self.stepping_over = false;
                     return;
                 }
             }
-            Output::JumpedToFunction | Output::ReadyToCycle | Output::ReturnedFromFunction => {
-                cpu.step(Input::None)
-            }
+        }
 
-            _ => {
-                return;
-            }
+        // Handle input (changes to the CPU's step() arguments based on its current state and ours)
+        let Some(result) = self.handle_input() else {
+            return;
         };
 
+        let Some(cpu_state) = self.cpu_state.as_mut() else {
+            return;
+        };
+
+        // Handle output (changes to our state based on the Cpu)
         match result {
             Ok(Output::Char(c)) => {
                 *cpu_state = Output::ReadyToCycle;
@@ -766,7 +807,9 @@ impl Tide {
                 self.focus_redirect = Focus::Input;
                 *cpu_state = out.clone();
             }
-            Ok(ref out @ (Output::JumpedToFunction | Output::ReturnedFromFunction)) => {
+            Ok(ref out @ Output::ReturnedFromFunction) => {
+                // TODO: Cpu is not returning from builtins like printString even though they count
+                // as function calls
                 self.stepping_over = false;
                 *cpu_state = out.clone();
             }
@@ -781,9 +824,18 @@ impl Tide {
         };
     }
 
-    #[allow(clippy::unused_self)] // temporary
     fn toggle_breakpoint(&mut self) {
-        //todo!();
+        if let Some(cursor_range) = self.source_cursor {
+            // Safety: code can't exceed 1000 lines, so won't exceed 65535
+            #[allow(clippy::cast_possible_truncation)]
+            let line = cursor_range.sorted_cursors()[0].pcursor.paragraph as u16;
+
+            if self.breakpoints.contains(&line) {
+                self.breakpoints.remove(&line);
+            } else {
+                self.breakpoints.insert(line);
+            }
+        }
     }
 }
 
@@ -797,11 +849,13 @@ impl Default for Tide {
             channels: default_channels(),
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
-            breakpoints: vec![],
+            breakpoints: HashSet::new(),
             cpu: None,
             cpu_state: None,
             running_to_completion: false,
             stepping_over: false,
+
+            source_cursor: None,
 
             editing_registers: false,
 
@@ -1369,6 +1423,7 @@ impl eframe::App for Tide {
             self.focus_redirect = Focus::None;
             self.editing_registers = cloned.editing_registers;
             self.dirty = cloned.dirty;
+            self.source_cursor = cloned.source_cursor;
 
             if self.running_to_completion | self.stepping_over {
                 self.step();
