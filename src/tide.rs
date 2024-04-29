@@ -596,35 +596,6 @@ impl Tide {
         Self::default()
     }
 
-    fn clone(&self) -> Self {
-        Self {
-            source: self.source.clone(),
-            dirty: self.dirty,
-            save_path: self.save_path.clone(),
-            #[cfg(target_arch = "wasm32")]
-            channels: None,
-            symbols: self.symbols.clone(),
-            source_map: self.source_map.clone(),
-            breakpoints: self.breakpoints.clone(),
-            cpu: self.cpu.clone(),
-            cpu_state: self.cpu_state.clone(),
-            running_to_completion: self.running_to_completion,
-            stepping_over: self.stepping_over,
-            source_cursor: self.source_cursor.clone(),
-            editing_registers: self.editing_registers,
-            focus_redirect: self.focus_redirect,
-            input: self.input.clone(),
-            input_ready: self.input_ready,
-            output: self.output.clone(),
-            error: self.error.clone(),
-            dock_state: self.dock_state.clone(),
-            about_window_open: self.about_window_open,
-            shortcut_window_open: self.shortcut_window_open,
-            ascii_window_open: self.ascii_window_open,
-            unapplied_preferences: self.unapplied_preferences,
-        }
-    }
-
     fn assemble(&mut self) -> TinyResult<()> {
         self.input.clear();
         self.input_ready = false;
@@ -701,47 +672,33 @@ impl Tide {
         };
 
         match cpu_state {
-            Output::WaitingForString => {
-                if self.input_ready {
-                    let result = cpu.step(Input::String(self.input.clone()));
+            Output::WaitingForString if self.input_ready => {
+                let result = cpu.step(Input::String(self.input.clone()));
+                self.output.push_str(&self.input);
+                self.output.push('\n');
+                self.input.clear();
+                self.input_ready = false;
+                Some(result)
+            }
+            Output::WaitingForChar if self.input_ready && self.input.len() == 1 => {
+                let c = self.input.pop().unwrap();
+                let result = cpu.step(Input::Char(c));
+                self.output.push(c);
+                self.output.push('\n');
+                self.input_ready = false;
+                Some(result)
+            }
+            Output::WaitingForInteger if self.input_ready => match self.input.parse() {
+                Ok(i) => {
+                    let result = cpu.step(Input::Integer(i));
                     self.output.push_str(&self.input);
                     self.output.push('\n');
                     self.input.clear();
                     self.input_ready = false;
                     Some(result)
-                } else {
-                    None
                 }
-            }
-            Output::WaitingForChar => {
-                if self.input_ready && self.input.len() == 1 {
-                    let c = self.input.pop().unwrap();
-                    let result = cpu.step(Input::Char(c));
-                    self.output.push(c);
-                    self.output.push('\n');
-                    self.input_ready = false;
-                    Some(result)
-                } else {
-                    None
-                }
-            }
-            Output::WaitingForInteger => {
-                if self.input_ready {
-                    match self.input.parse() {
-                        Ok(i) => {
-                            let result = cpu.step(Input::Integer(i));
-                            self.output.push_str(&self.input);
-                            self.output.push('\n');
-                            self.input.clear();
-                            self.input_ready = false;
-                            Some(result)
-                        }
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                }
-            }
+                Err(_) => None,
+            },
             Output::JumpedToFunction if self.stepping_over => match cpu.step(Input::None) {
                 Ok(
                     Output::JumpedToFunction | Output::ReturnedFromFunction | Output::ReadyToCycle,
@@ -754,7 +711,50 @@ impl Tide {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn handle_output(&mut self, result: Result<Output, TinyError>) {
+        let Some(cpu_state) = self.cpu_state.as_mut() else {
+            return;
+        };
+
+        match result {
+            Ok(r) => match r {
+                Output::Char(c) => {
+                    *cpu_state = Output::ReadyToCycle;
+                    self.output.push(c);
+                    self.focus_redirect = Focus::Output;
+                }
+                Output::String(ref s) => {
+                    *cpu_state = Output::ReadyToCycle;
+                    self.focused_output(s);
+                }
+                ref out @ Output::Stopped => {
+                    *cpu_state = out.clone();
+                    self.running_to_completion = false;
+                    self.stepping_over = false;
+                    self.error.push_str("Completed");
+                }
+                ref out @ (Output::WaitingForChar
+                | Output::WaitingForString
+                | Output::WaitingForInteger) => {
+                    self.focus_redirect = Focus::Input;
+                    *cpu_state = out.clone();
+                }
+                ref out @ Output::ReturnedFromFunction => {
+                    self.stepping_over = false;
+                    *cpu_state = out.clone();
+                }
+                out => *cpu_state = out,
+            },
+
+            Err(e) => {
+                *cpu_state = Output::Stopped;
+                self.running_to_completion = false;
+                self.stepping_over = false;
+                self.focused_error(&e);
+            }
+        };
+    }
+
     fn step(&mut self) {
         // Stop running on a breakpoint: skip this step() and allow future ones
         if self.running_to_completion {
@@ -778,50 +778,8 @@ impl Tide {
             return;
         };
 
-        let Some(cpu_state) = self.cpu_state.as_mut() else {
-            return;
-        };
-
         // Handle output (changes to our state based on the Cpu)
-        match result {
-            Ok(Output::Char(c)) => {
-                *cpu_state = Output::ReadyToCycle;
-                self.output.push(c);
-                self.focus_redirect = Focus::Output;
-            }
-            Ok(Output::String(ref s)) => {
-                *cpu_state = Output::ReadyToCycle;
-                self.focused_output(s);
-            }
-            Ok(ref out @ Output::Stopped) => {
-                *cpu_state = out.clone();
-                self.running_to_completion = false;
-                self.stepping_over = false;
-                self.error.push_str("Completed");
-            }
-            Ok(
-                ref out @ (Output::WaitingForChar
-                | Output::WaitingForString
-                | Output::WaitingForInteger),
-            ) => {
-                self.focus_redirect = Focus::Input;
-                *cpu_state = out.clone();
-            }
-            Ok(ref out @ Output::ReturnedFromFunction) => {
-                // TODO: Cpu is not returning from builtins like printString even though they count
-                // as function calls
-                self.stepping_over = false;
-                *cpu_state = out.clone();
-            }
-            Ok(out) => *cpu_state = out,
-
-            Err(e) => {
-                *cpu_state = Output::Stopped;
-                self.running_to_completion = false;
-                self.stepping_over = false;
-                self.focused_error(&e);
-            }
-        };
+        self.handle_output(result);
     }
 
     fn toggle_breakpoint(&mut self) {
@@ -1385,8 +1343,6 @@ impl eframe::App for Tide {
                 self.toggle_breakpoint();
             }
 
-            let mut cloned = Self::clone(self);
-
             match self.focus_redirect {
                 Focus::None => {}
                 Focus::Errors => {
@@ -1409,21 +1365,13 @@ impl eframe::App for Tide {
                 }
             };
 
-            DockArea::new(&mut self.dock_state)
-                .style(Style::from_egui(ui.style().as_ref()))
-                .show_inside(ui, &mut TINYTabViewer { tide: &mut cloned });
+            let mut dock_state = self.dock_state.clone();
 
-            self.cpu = cloned.cpu;
-            self.source = cloned.source;
-            self.symbols = cloned.symbols;
-            self.breakpoints = cloned.breakpoints;
-            self.input = cloned.input;
-            self.input_ready = cloned.input_ready;
-            self.cpu_state = cloned.cpu_state;
-            self.focus_redirect = Focus::None;
-            self.editing_registers = cloned.editing_registers;
-            self.dirty = cloned.dirty;
-            self.source_cursor = cloned.source_cursor;
+            DockArea::new(&mut dock_state)
+                .style(Style::from_egui(ui.style().as_ref()))
+                .show_inside(ui, &mut TINYTabViewer { tide: self });
+
+            self.dock_state = dock_state;
 
             if self.running_to_completion | self.stepping_over {
                 self.step();
