@@ -182,17 +182,17 @@ impl Cpu {
                 }
                 self.memory[addr] = Byte(0);
                 self.state = State::ReadyToCycle;
-                Ok(Output::ReadyToCycle)
+                Ok(Output::ReturnedFromFunction)
             }
             (Input::Integer(i), State::WaitingForInput) => {
                 self.load_into_acc(Byte(i));
                 self.state = State::ReadyToCycle;
-                Ok(Output::ReadyToCycle)
+                Ok(Output::ReturnedFromFunction)
             }
             (Input::Char(c), State::WaitingForInput) => {
                 self.load_into_acc(Byte::from_char(c));
                 self.state = State::ReadyToCycle;
-                Ok(Output::ReadyToCycle)
+                Ok(Output::ReturnedFromFunction)
             }
             (_, _) => Err(TinyError::InternalProgramError(
                 "input type did not match expectation".to_string(),
