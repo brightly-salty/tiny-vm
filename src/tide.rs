@@ -1158,19 +1158,13 @@ impl eframe::App for Tide {
                 ui.menu_button("Debug", |ui| {
                     // Often we want to press multiple buttons in this menu,
                     // so we don't close it automatically when the user clicks one
-                    start_pressed |= ui.button("Start").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
-                    run_pressed |= ui.button("Start Without Debugging").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
-                    stop_pressed |= ui.button("Stop").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
+                    start_pressed |= ui.button("Start").clicked();
+                    run_pressed |= ui.button("Start Without Debugging").clicked();
+                    stop_pressed |= ui.button("Stop").clicked();
                     ui.separator();
-                    step_over_pressed |= ui.button("Step Over").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
-                    step_into_pressed |= ui.button("Step Into").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
-                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked()
-                        || ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
+                    step_over_pressed |= ui.button("Step Over").clicked();
+                    step_into_pressed |= ui.button("Step Into").clicked();
+                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked();
                 });
 
                 ui.menu_button("Help", |ui| {
