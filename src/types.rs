@@ -9,11 +9,13 @@ pub enum TinyError {
     UnknownOperand(Ln, String),
     UnknownOpcode(Ln, String),
     InvalidAssembly(Ln),
+    InvalidEscape(Ln, char),
     InvalidOperand(Ln, String, String),
     InvalidInstruction(String),
     InvalidAddress(String),
     InvalidAscii(String),
     InternalProgramError(String),
+    MismatchedDelimiter(Ln),
     InputError(String),
     OutputError,
     ArithmeticError(String, char, String),
@@ -32,6 +34,8 @@ impl fmt::Display for TinyError {
             Self::InvalidAssembly(ln) => {
                 write!(f, "line {ln}: invalid combination of opcode and operand")
             }
+            Self::MismatchedDelimiter(ln) => write!(f, "line {ln}: mismatched string delimiters"),
+            Self::InvalidEscape(ln, c) => write!(f, "line {ln}: invalid escape sequence '\\{c}'"),
             Self::InvalidInstruction(s) => write!(f, "byte {s} is invalid as an instruction"),
             Self::InvalidAddress(s) => write!(f, "byte {s} is invalid as an address"),
             Self::InvalidAscii(s) => write!(f, "byte {s} is invalid as an ASCII character"),

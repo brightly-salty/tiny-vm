@@ -223,11 +223,7 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
                     "pop" => Instruction::Hard(Opcode::Pop, operand),
                     "pusha" => Instruction::Hard(Opcode::Pusha, operand),
                     "dc" => {
-                        let s = operand_str[1..operand_str.len().saturating_sub(1)]
-                            .replace("\\n", "\n");
-
-                        let mut v: Vec<_> = s.chars().map(|c| Byte(c as i32)).collect();
-                        v.push(Byte::new(0));
+                        let v = parse_string(ln, operand_str)?;
                         len = u16::try_from(v.len()).map_err(|_| {
                             TinyError::InternalProgramError(
                                 "dc string length larger than u16::MAX".to_owned(),
@@ -241,4 +237,49 @@ fn parse_opcode(ln: usize, opcode_parts: &[String]) -> TinyResult<(u16, Line)> {
         }
     };
     Ok((len, opcode))
+}
+
+fn parse_string(ln: usize, s: &str) -> TinyResult<Vec<Byte>> {
+    let mut cs = s.chars();
+    if cs.next() != Some('"') {
+        return Err(TinyError::MismatchedDelimiter(ln));
+    }
+    let mut v = Vec::new();
+    loop {
+        match cs.next() {
+            Some('\\') => match cs.next() {
+                Some('"') => {
+                    v.push(Byte('"' as i32));
+                }
+                Some('n') => {
+                    v.push(Byte('\n' as i32));
+                }
+                Some('\\') => {
+                    v.push(Byte('\\' as i32));
+                }
+                Some('t') => {
+                    v.push(Byte('\t' as i32));
+                }
+                Some(c) => {
+                    return Err(TinyError::InvalidEscape(ln, c));
+                }
+                None => {
+                    return Err(TinyError::MismatchedDelimiter(ln));
+                }
+            },
+            Some('"') => {
+                if cs.next().is_some() {
+                    return Err(TinyError::MismatchedDelimiter(ln));
+                }
+                v.push(Byte(0));
+                return Ok(v);
+            }
+            Some(c) => {
+                v.push(Byte(c as i32));
+            }
+            None => {
+                return Err(TinyError::MismatchedDelimiter(ln));
+            }
+        }
+    }
 }
