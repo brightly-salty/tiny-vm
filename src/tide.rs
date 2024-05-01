@@ -8,10 +8,14 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{Receiver, Sender};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet},
+    time::Instant,
+};
+use std::{path::PathBuf, time::Duration};
 use tiny_vm::assemble;
 use tiny_vm::cpu::{Cpu, Input, Output};
 use tiny_vm::types::{Address, TinyError, TinyResult};
@@ -21,6 +25,8 @@ const EXAMPLES: [(&str, &str); 3] = [
     ("Box Volume", include_str!("../examples/boxVolume.tny")),
     ("GCD", include_str!("../examples/gcd.tny")),
 ];
+
+const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(34); // About 30 FPS
 
 #[cfg(target_arch = "wasm32")]
 enum OpenFileResult {
@@ -795,6 +801,81 @@ impl Tide {
             }
         }
     }
+
+    fn new_file(&mut self) {
+        let dirty = self.dirty;
+        #[cfg(target_arch = "wasm32")]
+        let tx = self.channels.as_mut().unwrap().0.clone();
+        #[cfg(target_arch = "wasm32")]
+        run_future(async move {
+            tx.send(ReturnAsyncFile::New(web_io::new_file(dirty).await))
+                .expect("Couldn't send New File result");
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if native_io::new_file(&self.save_path.clone(), &self.source.clone(), dirty) {
+            self.reset();
+        }
+    }
+
+    fn open_file(&mut self) {
+        let dirty = self.dirty;
+        #[cfg(target_arch = "wasm32")]
+        let tx = self.channels.as_mut().unwrap().0.clone();
+        #[cfg(target_arch = "wasm32")]
+        run_future(async move {
+            tx.send(ReturnAsyncFile::Open(web_io::open_file(dirty).await))
+                .expect("Couldn't send Open File result");
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some((path, source)) =
+            native_io::open_file(&self.save_path.clone(), &self.source.clone(), dirty)
+        {
+            self.save_path = Some(path);
+            self.source = source;
+        }
+    }
+
+    fn save_file_as(&mut self) {
+        let source = self.source.clone();
+
+        #[cfg(target_arch = "wasm32")]
+        let tx = self.channels.as_mut().unwrap().0.clone();
+
+        #[cfg(target_arch = "wasm32")]
+        run_future(async move {
+            tx.send(ReturnAsyncFile::Save(web_io::save_file_as(source).await))
+                .expect("Couldn't send Save As File result");
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = native_io::save_file_as(&source) {
+            self.dirty = false;
+            self.save_path = Some(path);
+        }
+    }
+
+    fn save_file(&mut self) {
+        let save_path = self.save_path.clone();
+        let source = self.source.clone();
+
+        #[cfg(target_arch = "wasm32")]
+        let tx = self.channels.as_mut().unwrap().0.clone();
+
+        #[cfg(target_arch = "wasm32")]
+        run_future(async move {
+            tx.send(ReturnAsyncFile::Save(
+                web_io::save_file(save_path, source).await,
+            ))
+            .expect("Couldn't send Save File result");
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = native_io::save_file(save_path, &source) {
+            self.dirty = false;
+            self.save_path = Some(path);
+        }
+    }
 }
 
 impl Default for Tide {
@@ -820,7 +901,6 @@ impl Default for Tide {
             focus_redirect: Focus::None,
 
             input: String::new(),
-            input_ready: false,
 
             output: String::new(),
 
@@ -1051,21 +1131,57 @@ impl eframe::App for Tide {
             // Ordering is important because shortcuts are *consumed*; the longest
             // shortcuts should be checked first when the same logical key is used with
             // different modifiers
-            let mut new_file_pressed = ui.input_mut(|i| i.consume_shortcut(&NEW_FILE_SHORTCUT));
-            let mut open_file_pressed = ui.input_mut(|i| i.consume_shortcut(&OPEN_FILE_SHORTCUT));
-            let mut save_as_file_pressed =
-                ui.input_mut(|i| i.consume_shortcut(&SAVE_AS_FILE_SHORTCUT));
-            let mut save_file_pressed = ui.input_mut(|i| i.consume_shortcut(&SAVE_FILE_SHORTCUT));
+            if ui.input_mut(|i| i.consume_shortcut(&NEW_FILE_SHORTCUT)) {
+                self.new_file();
+            }
 
-            let mut assemble_pressed = ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT));
+            if ui.input_mut(|i| i.consume_shortcut(&OPEN_FILE_SHORTCUT)) {
+                self.open_file();
+            }
 
-            let mut stop_pressed = ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT));
-            let mut run_pressed = ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT));
-            let mut start_pressed = ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT));
+            if ui.input_mut(|i| i.consume_shortcut(&SAVE_AS_FILE_SHORTCUT)) {
+                self.save_file_as();
+            }
 
-            let mut step_over_pressed = ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT));
-            let mut step_into_pressed = ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT));
-            let mut breakpoint_pressed = ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT));
+            if ui.input_mut(|i| i.consume_shortcut(&SAVE_FILE_SHORTCUT)) {
+                self.save_file();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT)) {
+                self.stop();
+                self.assemble()
+                    .map_err(|err| self.focused_error(&err))
+                    .unwrap_or_default();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT)) {
+                self.stop();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT)) {
+                self.run()
+                    .map_err(|err| self.focused_error(&err))
+                    .unwrap_or_default();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT)) {
+                self.start()
+                    .map_err(|err| self.focused_error(&err))
+                    .unwrap_or_default();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT)) {
+                self.stepping_over = Some(0);
+                self.step();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT)) {
+                self.step();
+            }
+
+            if ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT)) {
+                self.toggle_breakpoint();
+            }
 
             // Handle file IO state updates
             #[cfg(target_arch = "wasm32")]
@@ -1095,22 +1211,31 @@ impl eframe::App for Tide {
 
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    new_file_pressed |= ui.button("New").clicked();
-                    open_file_pressed |= ui.button("Open").clicked();
+                    let mut any = false;
+
+                    if ui.button("New").clicked() {
+                        self.new_file();
+                        any = true;
+                    }
+
+                    if ui.button("Open").clicked() {
+                        self.open_file();
+                        any = true;
+                    }
 
                     ui.separator();
 
-                    save_file_pressed |= ui.button("Save").clicked();
-                    save_as_file_pressed |= ui.button("Save As").clicked();
+                    if ui.button("Save As").clicked() {
+                        self.save_file_as();
+                        any = true;
+                    }
 
-                    if new_file_pressed
-                        || open_file_pressed
-                        || save_file_pressed
-                        || save_as_file_pressed
-                    {
-                        // This closes the menu when we click an option, but it comes with a side effect:
-                        // if we open the menu and select nothing, then press any keybind in that
-                        // menu, it will close
+                    if ui.button("Save").clicked() {
+                        self.save_file();
+                        any = true;
+                    }
+
+                    if any {
                         ui.close_menu();
                     }
 
@@ -1148,9 +1273,11 @@ impl eframe::App for Tide {
                 });
 
                 ui.menu_button("Build", |ui| {
-                    assemble_pressed |= ui.button("Assemble").clicked();
-
-                    if assemble_pressed {
+                    if ui.button("Assemble").clicked() {
+                        self.stop();
+                        self.assemble()
+                            .map_err(|err| self.focused_error(&err))
+                            .unwrap_or_default();
                         ui.close_menu();
                     }
                 });
@@ -1158,13 +1285,36 @@ impl eframe::App for Tide {
                 ui.menu_button("Debug", |ui| {
                     // Often we want to press multiple buttons in this menu,
                     // so we don't close it automatically when the user clicks one
-                    start_pressed |= ui.button("Start").clicked();
-                    run_pressed |= ui.button("Start Without Debugging").clicked();
-                    stop_pressed |= ui.button("Stop").clicked();
+                    if ui.button("Start").clicked() {
+                        self.start()
+                            .map_err(|err| self.focused_error(&err))
+                            .unwrap_or_default();
+                    }
+
+                    if ui.button("Start Without Debugging").clicked() {
+                        self.run()
+                            .map_err(|err| self.focused_error(&err))
+                            .unwrap_or_default();
+                    }
+
+                    if ui.button("Stop").clicked() {
+                        self.stop();
+                    }
+
                     ui.separator();
-                    step_over_pressed |= ui.button("Step Over").clicked();
-                    step_into_pressed |= ui.button("Step Into").clicked();
-                    breakpoint_pressed |= ui.button("Toggle Breakpoint").clicked();
+
+                    if ui.button("Step Over").clicked() {
+                        self.stepping_over = Some(0);
+                        self.step();
+                    }
+
+                    if ui.button("Step Into").clicked() {
+                        self.step();
+                    }
+
+                    if ui.button("Toggle Breakpoint").clicked() {
+                        self.toggle_breakpoint();
+                    }
                 });
 
                 ui.menu_button("Help", |ui| {
@@ -1223,119 +1373,6 @@ impl eframe::App for Tide {
                     }
                 });
             });
-
-            if new_file_pressed {
-                let dirty = self.dirty;
-                #[cfg(target_arch = "wasm32")]
-                let tx = self.channels.as_mut().unwrap().0.clone();
-                #[cfg(target_arch = "wasm32")]
-                run_future(async move {
-                    tx.send(ReturnAsyncFile::New(web_io::new_file(dirty).await))
-                        .expect("Couldn't send New File result");
-                });
-
-                #[cfg(not(target_arch = "wasm32"))]
-                if native_io::new_file(&self.save_path.clone(), &self.source.clone(), dirty) {
-                    self.reset();
-                }
-            }
-
-            if open_file_pressed {
-                let dirty = self.dirty;
-                #[cfg(target_arch = "wasm32")]
-                let tx = self.channels.as_mut().unwrap().0.clone();
-                #[cfg(target_arch = "wasm32")]
-                run_future(async move {
-                    tx.send(ReturnAsyncFile::Open(web_io::open_file(dirty).await))
-                        .expect("Couldn't send Open File result");
-                });
-
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some((path, source)) =
-                    native_io::open_file(&self.save_path.clone(), &self.source.clone(), dirty)
-                {
-                    self.save_path = Some(path);
-                    self.source = source;
-                }
-            }
-
-            if save_file_pressed {
-                let save_path = self.save_path.clone();
-                let source = self.source.clone();
-
-                #[cfg(target_arch = "wasm32")]
-                let tx = self.channels.as_mut().unwrap().0.clone();
-
-                #[cfg(target_arch = "wasm32")]
-                run_future(async move {
-                    tx.send(ReturnAsyncFile::Save(
-                        web_io::save_file(save_path, source).await,
-                    ))
-                    .expect("Couldn't send Save File result");
-                });
-
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = native_io::save_file(save_path, &source) {
-                    self.dirty = false;
-                    self.save_path = Some(path);
-                }
-
-                ui.close_menu();
-            }
-
-            if save_as_file_pressed {
-                let source = self.source.clone();
-
-                #[cfg(target_arch = "wasm32")]
-                let tx = self.channels.as_mut().unwrap().0.clone();
-
-                #[cfg(target_arch = "wasm32")]
-                run_future(async move {
-                    tx.send(ReturnAsyncFile::Save(web_io::save_file_as(source).await))
-                        .expect("Couldn't send Save As File result");
-                });
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = native_io::save_file_as(&source) {
-                    self.dirty = false;
-                    self.save_path = Some(path);
-                }
-            }
-
-            if assemble_pressed {
-                self.stop();
-                self.assemble()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
-            }
-
-            if start_pressed {
-                self.start()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
-            }
-
-            if run_pressed {
-                self.run()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
-            }
-
-            if stop_pressed {
-                self.stop();
-            }
-
-            if step_over_pressed {
-                self.stepping_over = true;
-                self.step();
-            }
-
-            if step_into_pressed {
-                self.step();
-            }
-
-            if breakpoint_pressed {
-                self.toggle_breakpoint();
-            }
 
             match self.focus_redirect {
                 Focus::None => {}
