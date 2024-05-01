@@ -179,45 +179,42 @@ fn text_editor(
 
     let previous = s.clone();
 
-    ui.add_enabled(enabled, |ui: &mut Ui| {
-        let output = egui::TextEdit::multiline(s)
-            .code_editor()
-            .desired_width(f32::INFINITY)
-            .min_size(ui.available_size())
-            .layouter(&mut |ui, string, _wrap_width| {
-                let mut layout_job = egui::text::LayoutJob::default();
+    let output = egui::TextEdit::multiline(s)
+        .code_editor()
+        .interactive(enabled)
+        .desired_width(f32::INFINITY)
+        .min_size(ui.available_size())
+        .layouter(&mut |ui, string, _wrap_width| {
+            let mut layout_job = egui::text::LayoutJob::default();
 
-                layout_job.wrap.max_width = f32::INFINITY;
+            layout_job.wrap.max_width = f32::INFINITY;
 
-                let default_text_format = egui::text::TextFormat {
-                    font_id: egui::FontId::monospace(15.0),
-                    ..Default::default()
-                };
-                let executing_text_format = egui::text::TextFormat {
-                    font_id: default_text_format.font_id.clone(),
-                    color: egui::Color32::BLUE,
-                    ..Default::default()
-                };
+            let default_text_format = egui::text::TextFormat {
+                font_id: egui::FontId::monospace(15.0),
+                ..Default::default()
+            };
+            let executing_text_format = egui::text::TextFormat {
+                font_id: default_text_format.font_id.clone(),
+                color: egui::Color32::BLUE,
+                ..Default::default()
+            };
 
-                for (i, line) in string.split_inclusive('\n').enumerate() {
-                    match executing_line {
-                        Some(l) if l == i => {
-                            layout_job.append(line, 0.0, executing_text_format.clone());
-                        }
-                        _ => layout_job.append(line, 0.0, default_text_format.clone()),
+            for (i, line) in string.split_inclusive('\n').enumerate() {
+                match executing_line {
+                    Some(l) if l == i => {
+                        layout_job.append(line, 0.0, executing_text_format.clone());
                     }
+                    _ => layout_job.append(line, 0.0, default_text_format.clone()),
                 }
+            }
 
-                ui.fonts(|f| f.layout_job(layout_job))
-            })
-            .show(ui);
+            ui.fonts(|f| f.layout_job(layout_job))
+        })
+        .show(ui);
 
-        *dirty |= &previous != s;
+    *dirty |= &previous != s;
 
-        *cursor_range = output.cursor_range;
-
-        output.response
-    });
+    *cursor_range = output.cursor_range;
 }
 
 impl<'a> TabViewer for TINYTabViewer<'a> {
