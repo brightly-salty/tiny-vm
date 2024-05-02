@@ -393,7 +393,7 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
 
                                 ui.monospace(format!(
                                     "{addr:03}  {}{:05} {}  ",
-                                    if value.0.is_negative() { "-" } else { "" },
+                                    if value.0.is_negative() { "-" } else { " " },
                                     value.0.abs(),
                                     if chr.is_ascii() { chr } else { ' ' },
                                 ))
@@ -405,7 +405,7 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
                                             .custom_formatter(|n, _| {
                                                 format!(
                                                     "{}{:05}",
-                                                    if n.is_sign_positive() { "" } else { "-" },
+                                                    if n.is_sign_positive() { " " } else { "-" },
                                                     n.abs(),
                                                 )
                                             })
