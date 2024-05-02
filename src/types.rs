@@ -19,6 +19,7 @@ pub enum TinyError {
     InputError(String),
     OutputError,
     ArithmeticError(String, char, String),
+    NotAssembledError,
 }
 
 impl fmt::Display for TinyError {
@@ -46,6 +47,7 @@ impl fmt::Display for TinyError {
                 f,
                 "arithmetic error when executing {operand1} {op} {operand2}"
             ),
+            Self::NotAssembledError => write!(f, "program not yet assembled"),
         }
     }
 }

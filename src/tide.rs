@@ -3,7 +3,7 @@
 #![allow(clippy::future_not_send)]
 
 use eframe::egui::{Ui, WidgetText};
-use egui::text_selection::CursorRange;
+use egui::{text_selection::CursorRange, TextBuffer};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{Receiver, Sender};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
+    num::NonZeroU32,
     time::Instant,
 };
 use std::{path::PathBuf, time::Duration};
@@ -27,6 +27,29 @@ const EXAMPLES: [(&str, &str); 3] = [
 ];
 
 const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(34); // About 30 FPS
+
+#[derive(Clone)]
+struct CpuBundle {
+    cpu: Cpu,
+    last_output: Output,
+}
+
+impl Default for CpuBundle {
+    fn default() -> Self {
+        Self {
+            cpu: Cpu::new(),
+            last_output: Output::ReadyToCycle,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+enum RunMode {
+    #[default]
+    Pause,
+    Run,
+    StepOver(NonZeroU32),
+}
 
 #[cfg(target_arch = "wasm32")]
 enum OpenFileResult {
@@ -52,15 +75,6 @@ enum ReturnAsyncFile {
 
 #[derive(Clone, Copy)]
 struct UnappliedPreferences;
-
-#[derive(Clone, Copy, Default)]
-enum Focus {
-    #[default]
-    None,
-    Errors,
-    Input,
-    Output,
-}
 
 fn ascii_char(c: u8) -> String {
     match c {
@@ -127,7 +141,7 @@ fn main() {
     });
 }
 
-struct TINYTabViewer<'a> {
+struct TIDETabViewer<'a> {
     tide: &'a mut Tide,
 }
 
@@ -217,34 +231,66 @@ fn text_editor(
     *cursor_range = output.cursor_range;
 }
 
-impl<'a> TabViewer for TINYTabViewer<'a> {
+#[derive(Clone, PartialEq)]
+enum TideTab {
+    Source,
+    Listing,
+    Executable,
+    Memory,
+    AssemblyErrors,
+    InputOutput,
+    Registers,
+    Stack,
+    Symbols,
+}
+
+impl TideTab {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Source => "Source",
+            Self::Listing => "Listing",
+            Self::Executable => "Executable",
+            Self::Memory => "Memory",
+            Self::AssemblyErrors => "Assembly Errors",
+            Self::InputOutput => "Input/Output",
+            Self::Registers => "Registers",
+            Self::Stack => "Stack",
+            Self::Symbols => "Symbols",
+        }
+    }
+}
+
+type Tab = TideTab;
+
+impl<'a> TabViewer for TIDETabViewer<'a> {
     // This associated type is used to attach some data to each tab.
-    type Tab = String;
+    type Tab = Tab;
 
     // Returns the current `tab`'s title.
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
+        tab.name().into()
     }
 
     // Defines the contents of a given `tab`.
     #[allow(clippy::too_many_lines)]
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "Source" => {
+        match tab {
+            Tab::Source => {
                 text_editor(
                     &mut self.tide.source,
                     &mut self.tide.dirty,
-                    self.tide.cpu.is_none(),
+                    self.tide.cpu_bundle.is_none(),
                     self.tide
-                        .cpu
+                        .cpu_bundle
                         .as_ref()
-                        .and_then(|cpu| self.tide.source_map.get(&cpu.cu.ip))
+                        .and_then(|bundle| self.tide.source_map.get(&bundle.cpu.cu.ip))
                         .copied(),
                     &mut self.tide.source_cursor,
                     ui,
                 );
             }
-            "Listing" => {
+
+            Tab::Listing => {
                 let num_rows = 900;
 
                 TableBuilder::new(ui)
@@ -286,9 +332,9 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                             });
 
                             row.col(|ui| {
-                                ui.monospace(self.tide.cpu.as_ref().map_or_else(
+                                ui.monospace(self.tide.cpu_bundle.as_ref().map_or_else(
                                     || "?????".to_owned(),
-                                    |cpu| format!("{:05}", cpu.memory[address].0),
+                                    |bundle| format!("{:05}", bundle.cpu.memory[address].0),
                                 ));
                             });
 
@@ -298,8 +344,9 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         });
                     });
             }
-            "Executable" => {
-                if let Some(cpu) = self.tide.cpu.as_ref() {
+
+            Tab::Executable => {
+                if let Some(CpuBundle { cpu, .. }) = self.tide.cpu_bundle.as_ref() {
                     let max_address = self
                         .tide
                         .source_map
@@ -322,7 +369,8 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     });
                 }
             }
-            "Memory" => TableBuilder::new(ui)
+
+            Tab::Memory => TableBuilder::new(ui)
                 .striped(true)
                 .column(Column::remainder().resizable(false))
                 .body(|body| {
@@ -330,7 +378,9 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         let addr = u16::try_from(row.index()).unwrap();
 
                         row.col(|ui| {
-                            if let Some(ref mut cpu) = self.tide.cpu.as_mut() {
+                            if let Some(CpuBundle { ref mut cpu, .. }) =
+                                self.tide.cpu_bundle.as_mut()
+                            {
                                 let value = cpu.memory[Address(addr)];
                                 let chr = cpu.memory[Address(addr)].read_as_char().unwrap_or(' ');
 
@@ -355,7 +405,8 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         });
                     });
                 }),
-            "Assembly Errors" => {
+
+            Tab::AssemblyErrors => {
                 ui.add_sized(
                     ui.available_size(),
                     egui::TextEdit::multiline(&mut self.tide.error)
@@ -363,12 +414,12 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .interactive(false),
                 );
             }
-            "Input/Output" => {
-                if matches!(self.tide.focus_redirect, Focus::Input) {
-                    ui.text_edit_singleline(&mut self.tide.input)
-                        .request_focus();
-                } else {
-                    ui.text_edit_singleline(&mut self.tide.input);
+
+            Tab::InputOutput => {
+                let response = ui.text_edit_singleline(&mut self.tide.input);
+
+                if !matches!(self.tide.run_mode, RunMode::Pause) {
+                    response.request_focus();
                 }
 
                 ui.add_sized(
@@ -378,13 +429,53 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                         .interactive(false),
                 );
                 ui.input(|i| {
-                    self.tide.input_ready = i.key_pressed(egui::Key::Enter);
+                    if i.key_pressed(egui::Key::Enter) {
+                        // If the Cpu is waiting for Input matching what we have, step it
+                        if let Some(CpuBundle {
+                            ref last_output, ..
+                        }) = self.tide.cpu_bundle
+                        {
+                            match last_output {
+                                Output::WaitingForInteger => {
+                                    if let Ok(i) = self.tide.input.parse() {
+                                        _ = self
+                                            .tide
+                                            .step(Input::Integer(i))
+                                            .map_err(|err| self.tide.focused_error(&err));
+                                        self.tide.input.clear();
+                                    }
+                                }
+
+                                Output::WaitingForChar if self.tide.input.len() == 1 => {
+                                    if let Some(c) = self.tide.input.pop() {
+                                        _ = self
+                                            .tide
+                                            .step(Input::Char(c))
+                                            .map_err(|err| self.tide.focused_error(&err));
+                                    }
+                                }
+
+                                Output::WaitingForString => {
+                                    if !self.tide.input.is_empty() {
+                                        let s = self.tide.input.take();
+                                        _ = self
+                                            .tide
+                                            .step(Input::String(s))
+                                            .map_err(|err| self.tide.focused_error(&err));
+                                    }
+                                }
+
+                                _ => {}
+                            }
+                        };
+                    }
                 });
             }
-            "Registers" => {
-                ui.add_enabled_ui(self.tide.cpu.is_some(), |ui| {
+
+            Tab::Registers => {
+                ui.add_enabled_ui(self.tide.cpu_bundle.is_some(), |ui| {
                     egui::Grid::new(1).show(ui, |ui| {
-                        if let Some(ref mut cpu) = &mut self.tide.cpu {
+                        if let Some(CpuBundle { ref mut cpu, .. }) = &mut self.tide.cpu_bundle {
                             ui.checkbox(&mut self.tide.editing_registers, "Editing");
                             ui.end_row();
 
@@ -467,23 +558,21 @@ impl<'a> TabViewer for TINYTabViewer<'a> {
                     });
                 });
             }
-            "Stack" => {
-                if let Some(cpu) = &self.tide.cpu {
+
+            Tab::Stack => {
+                if let Some(CpuBundle { cpu, .. }) = &self.tide.cpu_bundle {
                     for byte in cpu.get_stack() {
                         ui.monospace(byte.to_string());
                     }
                 }
             }
-            "Symbols" => {
-                ui.add_enabled_ui(self.tide.cpu.is_some(), |ui| {
+
+            Tab::Symbols => {
+                ui.add_enabled_ui(self.tide.cpu_bundle.is_some(), |ui| {
                     for address in self.tide.symbols.keys() {
                         ui.monospace(format!("{:03}   {}", address, self.tide.symbols[address]));
                     }
                 });
-            }
-
-            _ => {
-                ui.label("<Invalid tab>");
             }
         };
     }
@@ -516,13 +605,10 @@ struct Tide {
     #[serde(skip)]
     breakpoints: HashSet<u16>, // Indices of lines
     #[serde(skip)]
-    cpu: Option<Cpu>,
+    cpu_bundle: Option<CpuBundle>,
+
     #[serde(skip)]
-    cpu_state: Option<Output>,
-    #[serde(skip)]
-    running_to_completion: bool,
-    #[serde(skip)]
-    stepping_over: bool,
+    run_mode: RunMode,
 
     #[serde(skip)]
     source_cursor: Option<CursorRange>,
@@ -531,12 +617,7 @@ struct Tide {
     editing_registers: bool,
 
     #[serde(skip)]
-    focus_redirect: Focus,
-
-    #[serde(skip)]
     input: String,
-    #[serde(skip)]
-    input_ready: bool,
 
     #[serde(skip)]
     output: String,
@@ -544,8 +625,10 @@ struct Tide {
     #[serde(skip)]
     error: String,
 
+    max_cpu_block_duration: Duration,
+
     #[serde(skip, default = "default_dock_state")]
-    dock_state: DockState<String>,
+    dock_state: DockState<Tab>,
 
     #[serde(skip)]
     about_window_open: bool,
@@ -566,26 +649,26 @@ fn default_channels() -> Option<(Sender<ReturnAsyncFile>, Receiver<ReturnAsyncFi
     Some(std::sync::mpsc::channel())
 }
 
-fn default_dock_state() -> DockState<String> {
-    let tabs = ["Source", "Listing", "Executable", "Memory"]
-        .map(str::to_string)
-        .into_iter()
-        .collect();
-
-    let mut dock_state = DockState::new(tabs);
+fn default_dock_state() -> DockState<Tab> {
+    let mut dock_state = DockState::new(vec![
+        Tab::Source,
+        Tab::Listing,
+        Tab::Executable,
+        Tab::Memory,
+    ]);
     let root = dock_state.main_surface_mut();
 
     // Add bottom panel
     let [old_node, _] = root.split_below(
         NodeIndex::root(),
         0.8,
-        vec!["Assembly Errors".to_string(), "Input/Output".to_string()],
+        vec![Tab::AssemblyErrors, Tab::InputOutput],
     );
 
     // Add side panel
-    let [_, side_panel] = root.split_right(old_node, 0.8, vec!["Registers".to_string()]);
-    let [_, side_panel] = root.split_below(side_panel, 1.0 / 3.0, vec!["Stack".to_string()]);
-    root.split_below(side_panel, 0.5, vec!["Symbols".to_string()]);
+    let [_, side_panel] = root.split_right(old_node, 0.8, vec![Tab::Registers]);
+    let [_, side_panel] = root.split_below(side_panel, 1.0 / 3.0, vec![Tab::Stack]);
+    root.split_below(side_panel, 0.5, vec![Tab::Symbols]);
 
     dock_state
 }
@@ -601,51 +684,44 @@ impl Tide {
 
     fn assemble(&mut self) -> TinyResult<()> {
         self.input.clear();
-        self.input_ready = false;
         self.output.clear();
         self.error.clear();
-        self.cpu = Some(Cpu::new());
+        self.cpu_bundle = Some(CpuBundle::default());
 
         let result = assemble(&self.source)?;
         self.symbols = result.0;
         self.source_map = result.1;
-        self.cpu.as_mut().unwrap().set_memory(&result.2);
-        self.cpu_state = Some(Output::ReadyToCycle);
+        self.cpu_bundle.as_mut().unwrap().cpu.set_memory(&result.2);
 
         Ok(())
     }
 
     fn reset(&mut self) {
         self.source.clear();
-        self.dirty = true;
+        self.dirty = false;
         self.save_path = None;
         self.symbols.clear();
         self.source_map.clear();
         self.breakpoints.clear();
-        self.cpu = None;
-        self.cpu_state = None;
-        self.running_to_completion = false;
-        self.stepping_over = false;
-        self.focus_redirect = Focus::None;
+        self.cpu_bundle = None;
+        self.run_mode = RunMode::Pause;
         self.input.clear();
-        self.input_ready = false;
         self.output.clear();
         self.error.clear();
     }
 
-    fn focused_error(&mut self, s: &TinyError) {
-        self.error.push_str(&s.to_string());
-        self.focus_redirect = Focus::Errors;
+    fn focus_io(dock_state: &mut DockState<Tab>) {
+        let tab = dock_state.find_tab(&Tab::InputOutput).unwrap();
+        dock_state.set_active_tab(tab);
     }
 
-    fn focused_output(&mut self, s: &str) {
-        self.output.push_str(s);
-        self.focus_redirect = Focus::Output;
+    fn focused_error(&mut self, s: &TinyError) {
+        self.error.push_str(&s.to_string());
     }
 
     fn run(&mut self) -> TinyResult<()> {
         self.assemble()?;
-        self.running_to_completion = true;
+        self.run_mode = RunMode::Run;
 
         Ok(())
     }
@@ -657,132 +733,105 @@ impl Tide {
     }
 
     fn stop(&mut self) {
-        self.running_to_completion = false;
-        self.stepping_over = false;
-        self.cpu.take();
-        self.cpu_state.take();
+        self.run_mode = RunMode::Pause;
+        self.cpu_bundle.take();
         self.source_map.clear();
         self.symbols.clear();
     }
 
-    fn handle_input(&mut self) -> Option<Result<Output, TinyError>> {
-        let Some(cpu) = self.cpu.as_mut() else {
-            return None;
-        };
-
-        let Some(cpu_state) = self.cpu_state.as_mut() else {
-            return None;
-        };
-
-        match cpu_state {
-            Output::WaitingForString if self.input_ready => {
-                let result = cpu.step(Input::String(self.input.clone()));
-                self.output.push_str(&self.input);
-                self.output.push('\n');
-                self.input.clear();
-                self.input_ready = false;
-                Some(result)
+    fn step(&mut self, input: Input) -> TinyResult<()> {
+        if let Some(ref mut bundle) = self.cpu_bundle {
+            // Forward our input to our output
+            match input {
+                Input::Integer(i) => self.output.push_str(&format!("{i}\n")),
+                Input::Char(c) => self.output.push_str(&format!("{c}\n")),
+                Input::String(ref s) => self.output.push_str(&format!("{s}\n")),
+                Input::None => {}
             }
-            Output::WaitingForChar if self.input_ready && self.input.len() == 1 => {
-                let c = self.input.pop().unwrap();
-                let result = cpu.step(Input::Char(c));
-                self.output.push(c);
-                self.output.push('\n');
-                self.input_ready = false;
-                Some(result)
-            }
-            Output::WaitingForInteger if self.input_ready => match self.input.parse() {
-                Ok(i) => {
-                    let result = cpu.step(Input::Integer(i));
-                    self.output.push_str(&self.input);
-                    self.output.push('\n');
-                    self.input.clear();
-                    self.input_ready = false;
-                    Some(result)
-                }
-                Err(_) => None,
-            },
-            Output::JumpedToFunction if self.stepping_over => match cpu.step(Input::None) {
-                Ok(
-                    Output::JumpedToFunction | Output::ReturnedFromFunction | Output::ReadyToCycle,
-                ) => self.handle_input(),
-                v => Some(v),
-            },
-            Output::ReadyToCycle | Output::ReturnedFromFunction => Some(cpu.step(Input::None)),
 
-            _ => None,
-        }
-    }
+            // Step the Cpu, pausing the RunMode if we encounter an error
+            bundle.last_output = bundle.cpu.step(input).map_err(|err| {
+                self.run_mode = RunMode::Pause;
+                err
+            })?;
 
-    fn handle_output(&mut self, result: Result<Output, TinyError>) {
-        let Some(cpu_state) = self.cpu_state.as_mut() else {
-            return;
-        };
+            // Forward Cpu output to our output
+            match &bundle.last_output {
+                Output::Stopped => self.error.push_str("Completed"),
+                Output::Char(c) => self.output.push(*c),
+                Output::String(s) => self.output.push_str(s),
 
-        match result {
-            Ok(r) => match r {
-                Output::Char(c) => {
-                    *cpu_state = Output::ReadyToCycle;
-                    self.output.push(c);
-                    self.focus_redirect = Focus::Output;
-                }
-                Output::String(ref s) => {
-                    *cpu_state = Output::ReadyToCycle;
-                    self.focused_output(s);
-                }
-                ref out @ Output::Stopped => {
-                    *cpu_state = out.clone();
-                    self.running_to_completion = false;
-                    self.stepping_over = false;
-                    self.error.push_str("Completed");
-                }
-                ref out @ (Output::WaitingForChar
+                _ => {}
+            };
+
+            // NOTE: Output::Stopped is not focused because it's likely the user would
+            // prefer to see the Input/Output tab when their program runs to completion
+            match &bundle.last_output {
+                // Focus IO if the Cpu wants input or had output
+                Output::WaitingForInteger
+                | Output::WaitingForChar
                 | Output::WaitingForString
-                | Output::WaitingForInteger) => {
-                    self.focus_redirect = Focus::Input;
-                    *cpu_state = out.clone();
+                | Output::Char(_)
+                | Output::String(_) => {
+                    Self::focus_io(&mut self.dock_state);
                 }
-                ref out @ Output::ReturnedFromFunction => {
-                    self.stepping_over = false;
-                    *cpu_state = out.clone();
-                }
-                out => *cpu_state = out,
-            },
 
-            Err(e) => {
-                *cpu_state = Output::Stopped;
-                self.running_to_completion = false;
-                self.stepping_over = false;
-                self.focused_error(&e);
+                _ => {}
             }
-        };
-    }
 
-    fn step(&mut self) {
-        // Stop running on a breakpoint: skip this step() and allow future ones
-        if self.running_to_completion {
-            if let Some(cpu) = self.cpu.as_ref() {
-                // Safety: code can't exceed 1000 lines, so won't exceed 65535
-                #[allow(clippy::cast_possible_truncation)]
-                if self
-                    .source_map
-                    .get(&cpu.cu.ip)
-                    .map_or_else(|| false, |line| self.breakpoints.contains(&(*line as u16)))
-                {
-                    self.running_to_completion = false;
-                    self.stepping_over = false;
-                    return;
+            // If stepping over, keep track of the call depth
+            match (&bundle.last_output, self.run_mode) {
+                // NOTE: If the relative call depth from a step over exceeds the max for a u32, we
+                // will stop stepping over. The user should know that this is their fault
+                (Output::JumpedToFunction, RunMode::StepOver(depth)) => {
+                    self.run_mode = depth
+                        .checked_add(1)
+                        .map_or(RunMode::Pause, RunMode::StepOver);
                 }
+                (Output::ReturnedFromFunction, RunMode::StepOver(depth)) => {
+                    self.run_mode = NonZeroU32::try_from(depth.get() - 1)
+                        .ok()
+                        .map_or(RunMode::Pause, RunMode::StepOver);
+                }
+                _ => {}
+            };
+
+            // If stopped, update the run mode
+            if matches!(&bundle.last_output, Output::Stopped) {
+                self.run_mode = RunMode::Pause;
             }
+        } else {
+            // TODO: Actually error here somehow
+            /*return anyhow::Error::from(
+                "Attempt to step with no Cpu (is the program assembled?)".into(),
+            );*/
         }
 
-        // Handle input (changes to the CPU's step() arguments based on its current state and ours)
-        let Some(result) = self.handle_input() else {
-            return;
-        };
+        Ok(())
+    }
 
-        // Handle output (changes to our state based on the Cpu)
-        self.handle_output(result);
+    fn step_over(&mut self) -> TinyResult<()> {
+        self.run_mode = RunMode::StepOver(NonZeroU32::MIN);
+        self.step(Input::None)?;
+        Ok(())
+    }
+
+    #[allow(clippy::missing_const_for_fn)]
+    fn should_autostep(&self) -> bool {
+        matches!(
+            (&self.run_mode, &self.cpu_bundle),
+            (
+                RunMode::Run | RunMode::StepOver(_),
+                Some(CpuBundle {
+                    last_output: Output::ReadyToCycle
+                        | Output::JumpedToFunction
+                        | Output::ReturnedFromFunction
+                        | Output::Char(_)
+                        | Output::String(_),
+                    ..
+                }),
+            )
+        )
     }
 
     fn toggle_breakpoint(&mut self) {
@@ -886,22 +935,20 @@ impl Default for Tide {
             symbols: BTreeMap::new(),
             source_map: HashMap::new(),
             breakpoints: HashSet::new(),
-            cpu: None,
-            cpu_state: None,
-            running_to_completion: false,
-            stepping_over: false,
+            cpu_bundle: None,
+            run_mode: RunMode::Pause,
 
             source_cursor: None,
 
             editing_registers: false,
-
-            focus_redirect: Focus::None,
 
             input: String::new(),
 
             output: String::new(),
 
             error: String::new(),
+
+            max_cpu_block_duration: DEFAULT_MAX_CPU_BLOCK_DURATION,
 
             dock_state: default_dock_state(),
 
@@ -1146,9 +1193,7 @@ impl eframe::App for Tide {
 
             if ui.input_mut(|i| i.consume_shortcut(&ASSEMBLE_SHORTCUT)) {
                 self.stop();
-                self.assemble()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
+                _ = self.assemble().map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&STOP_SHORTCUT)) {
@@ -1156,24 +1201,21 @@ impl eframe::App for Tide {
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&RUN_SHORTCUT)) {
-                self.run()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
+                _ = self.run().map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&START_SHORTCUT)) {
-                self.start()
-                    .map_err(|err| self.focused_error(&err))
-                    .unwrap_or_default();
+                _ = self.start().map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&STEP_OVER_SHORTCUT)) {
-                self.stepping_over = Some(0);
-                self.step();
+                _ = self.step_over().map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT)) {
-                self.step();
+                _ = self
+                    .step(Input::None)
+                    .map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT)) {
@@ -1283,15 +1325,11 @@ impl eframe::App for Tide {
                     // Often we want to press multiple buttons in this menu,
                     // so we don't close it automatically when the user clicks one
                     if ui.button("Start").clicked() {
-                        self.start()
-                            .map_err(|err| self.focused_error(&err))
-                            .unwrap_or_default();
+                        _ = self.start().map_err(|err| self.focused_error(&err));
                     }
 
                     if ui.button("Start Without Debugging").clicked() {
-                        self.run()
-                            .map_err(|err| self.focused_error(&err))
-                            .unwrap_or_default();
+                        _ = self.run().map_err(|err| self.focused_error(&err));
                     }
 
                     if ui.button("Stop").clicked() {
@@ -1301,12 +1339,13 @@ impl eframe::App for Tide {
                     ui.separator();
 
                     if ui.button("Step Over").clicked() {
-                        self.stepping_over = Some(0);
-                        self.step();
+                        _ = self.step_over().map_err(|err| self.focused_error(&err));
                     }
 
                     if ui.button("Step Into").clicked() {
-                        self.step();
+                        _ = self
+                            .step(Input::None)
+                            .map_err(|err| self.focused_error(&err));
                     }
 
                     if ui.button("Toggle Breakpoint").clicked() {
@@ -1347,7 +1386,7 @@ impl eframe::App for Tide {
                                     dirty,
                                     index,
                                 ) {
-                                    self.save_path = None;
+                                    self.reset();
                                     self.source = source;
                                 }
 
@@ -1371,44 +1410,20 @@ impl eframe::App for Tide {
                 });
             });
 
-            match self.focus_redirect {
-                Focus::None => {}
-                Focus::Errors => {
-                    let tab = self
-                        .dock_state
-                        .find_tab(&String::from("Assembly Errors"))
-                        .unwrap();
-
-                    self.dock_state.set_active_tab(tab);
-                    self.focus_redirect = Focus::None;
-                }
-                Focus::Input | Focus::Output => {
-                    let tab = self
-                        .dock_state
-                        .find_tab(&String::from("Input/Output"))
-                        .unwrap();
-
-                    self.dock_state.set_active_tab(tab);
-                    self.focus_redirect = Focus::None;
-                }
-            };
-
             let mut dock_state = self.dock_state.clone();
 
             DockArea::new(&mut dock_state)
                 .style(Style::from_egui(ui.style().as_ref()))
-                .show_inside(ui, &mut TINYTabViewer { tide: self });
+                .show_inside(ui, &mut TIDETabViewer { tide: self });
 
             self.dock_state = dock_state;
 
-            if self.running_to_completion | self.stepping_over {
-                self.step();
-            } else if self.input_ready {
-                match (&self.cpu_state, &self.input) {
-                    (Some(Output::WaitingForInteger), s) if s.parse::<i32>().is_ok() => self.step(),
-                    (Some(Output::WaitingForChar), s) if s.len() == 1 => self.step(),
-                    (Some(Output::WaitingForString), _) => self.step(),
-                    _ => {}
+            let cpu_block_time = Instant::now();
+
+            while cpu_block_time.elapsed() < self.max_cpu_block_duration && self.should_autostep() {
+                if let Err(e) = self.step(Input::None) {
+                    self.focused_error(&e);
+                    break;
                 }
             }
         });
