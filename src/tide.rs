@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{Receiver, Sender};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     num::NonZeroU32,
     time::Instant,
 };
@@ -29,6 +29,8 @@ const EXAMPLES: [(&str, &str); 3] = [
 const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(16); // About 60 FPS
 const MIN_CPU_BLOCK_DURATION: Duration = Duration::from_millis(3); // 334 FPS
 const MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(50); // 20 FPS
+
+const MAX_SCROLLBACK: usize = 100;
 
 const DEFAULT_STOP_ON_ERROR: bool = false;
 
@@ -75,6 +77,21 @@ enum ReturnAsyncFile {
     New(bool),
     Open(OpenFileResult),
     Save(SaveFileResult),
+}
+
+fn enforce_scrollback(s: &mut VecDeque<String>) {
+    let line_count = s.len();
+
+    if line_count > MAX_SCROLLBACK {
+        let last_kept_line = line_count - MAX_SCROLLBACK;
+        let mut current_line = 0;
+
+        s.retain(|_| {
+            let result = current_line >= last_kept_line;
+            current_line += 1;
+            result
+        });
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -429,7 +446,7 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
 
                 ui.add_sized(
                     ui.available_size(),
-                    egui::TextEdit::multiline(&mut self.tide.error)
+                    egui::TextEdit::multiline(&mut error)
                         .code_editor()
                         .interactive(false),
                 );
@@ -442,9 +459,14 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
                     response.request_focus();
                 }
 
+                enforce_scrollback(&mut self.tide.output);
+
+                let slices = &self.tide.output.as_slices();
+                let mut output = format!("{}\n{}", slices.0.join("\n"), slices.1.join("\n"));
+
                 ui.add_sized(
                     ui.available_size(),
-                    egui::TextEdit::multiline(&mut self.tide.output)
+                    egui::TextEdit::multiline(&mut output)
                         .code_editor()
                         .interactive(false),
                 );
@@ -640,10 +662,10 @@ struct Tide {
     input: String,
 
     #[serde(skip)]
-    output: String,
+    output: VecDeque<String>,
 
     #[serde(skip)]
-    error: String,
+    error: VecDeque<String>,
 
     max_cpu_block_duration: Duration,
     stop_on_error: bool,
@@ -736,8 +758,14 @@ impl Tide {
         dock_state.set_active_tab(tab);
     }
 
-    fn focused_error(&mut self, s: &TinyError) {
-        self.error.push_str(&s.to_string());
+    fn focus_error(dock_state: &mut DockState<Tab>) {
+        let tab = dock_state.find_tab(&Tab::AssemblyErrors).unwrap();
+        dock_state.set_active_tab(tab);
+    }
+
+    fn focused_error(&mut self, e: &TinyError) {
+        self.error.push_back(e.to_string());
+        Self::focus_error(&mut self.dock_state);
     }
 
     fn run(&mut self) -> TinyResult<()> {
@@ -760,13 +788,25 @@ impl Tide {
         self.symbols.clear();
     }
 
+    fn push_to(queue: &mut VecDeque<String>, s: &str) {
+        for c in s.chars() {
+            if c == '\n' {
+                queue.push_back(String::new());
+            } else if let Some(back) = queue.back_mut() {
+                back.push(c);
+            } else {
+                queue.push_back(c.to_string());
+            }
+        }
+    }
+
     fn step(&mut self, input: Input) -> TinyResult<()> {
         if let Some(ref mut bundle) = self.cpu_bundle {
             // Forward our input to our output
             match input {
-                Input::Integer(i) => self.output.push_str(&format!("{i}\n")),
-                Input::Char(c) => self.output.push_str(&format!("{c}\n")),
-                Input::String(ref s) => self.output.push_str(&format!("{s}\n")),
+                Input::Integer(i) => Self::push_to(&mut self.output, &i.to_string()),
+                Input::Char(c) => Self::push_to(&mut self.output, &c.to_string()),
+                Input::String(ref s) => Self::push_to(&mut self.output, s),
                 Input::None => {}
             }
 
@@ -780,9 +820,9 @@ impl Tide {
 
             // Forward Cpu output to our output
             match &bundle.last_output {
-                Output::Stopped => self.error.push_str("Completed"),
-                Output::Char(c) => self.output.push(*c),
-                Output::String(s) => self.output.push_str(s),
+                Output::Stopped => self.error.push_back("Completed".to_string()),
+                Output::Char(c) => Self::push_to(&mut self.output, &c.to_string()),
+                Output::String(ref s) => Self::push_to(&mut self.output, &s.clone()),
 
                 _ => {}
             };
@@ -975,10 +1015,8 @@ impl Default for Tide {
             editing_registers: false,
 
             input: String::new(),
-
-            output: String::new(),
-
-            error: String::new(),
+            output: VecDeque::new(),
+            error: VecDeque::new(),
 
             max_cpu_block_duration: DEFAULT_MAX_CPU_BLOCK_DURATION,
             stop_on_error: DEFAULT_STOP_ON_ERROR,
