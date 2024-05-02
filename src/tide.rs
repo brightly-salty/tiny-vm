@@ -474,7 +474,7 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
 
             Tab::Registers => {
                 ui.add_enabled_ui(self.tide.cpu_bundle.is_some(), |ui| {
-                    egui::Grid::new(1).show(ui, |ui| {
+                    egui::Grid::new("RegistersGrid").show(ui, |ui| {
                         if let Some(CpuBundle { ref mut cpu, .. }) = &mut self.tide.cpu_bundle {
                             ui.checkbox(&mut self.tide.editing_registers, "Editing");
                             ui.end_row();
@@ -1095,7 +1095,7 @@ impl eframe::App for Tide {
                     .auto_sized()
                     .open(&mut self.shortcut_window_open)
                     .show(ctx, |ui| {
-                        egui::Grid::new(7).show(ui, |ui| {
+                        egui::Grid::new("ShortcutsGrid").show(ui, |ui| {
                             for (action, shortcut) in SHORTCUTS {
                                 // Separate sections: File actions | Build actions | Run actions |
                                 //                    Debug actions
@@ -1125,7 +1125,7 @@ impl eframe::App for Tide {
                                 .size(24.0),
                         );
 
-                        egui::Grid::new(6).show(ui, |ui| {
+                        egui::Grid::new("VersionGrid").show(ui, |ui| {
                             ui.weak(format!(
                                 "{} built on {}",
                                 env!("VERGEN_GIT_DESCRIBE"),
