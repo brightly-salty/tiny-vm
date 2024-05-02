@@ -28,6 +28,8 @@ const EXAMPLES: [(&str, &str); 3] = [
 
 const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(34); // About 30 FPS
 
+const STOP_ON_ERROR: bool = false;
+
 #[derive(Clone)]
 struct CpuBundle {
     cpu: Cpu,
@@ -751,7 +753,9 @@ impl Tide {
 
             // Step the Cpu, pausing the RunMode if we encounter an error
             bundle.last_output = bundle.cpu.step(input).map_err(|err| {
-                self.run_mode = RunMode::Pause;
+                if STOP_ON_ERROR {
+                    self.run_mode = RunMode::Pause;
+                }
                 err
             })?;
 
