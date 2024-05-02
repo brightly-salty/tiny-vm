@@ -392,15 +392,23 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
                                 let chr = cpu.memory[Address(addr)].read_as_char().unwrap_or(' ');
 
                                 ui.monospace(format!(
-                                    "{addr:03}  {value:05} {}  ",
-                                    if chr.is_ascii() { chr } else { ' ' }
+                                    "{addr:03}  {}{:05} {}  ",
+                                    if value.0.is_negative() { "-" } else { "" },
+                                    value.0.abs(),
+                                    if chr.is_ascii() { chr } else { ' ' },
                                 ))
                                 .context_menu(|ui| {
                                     ui.label(format!("Address {addr:03}"));
                                     ui.separator();
                                     ui.add(
                                         egui::DragValue::new(&mut cpu.memory[Address(addr)].0)
-                                            .custom_formatter(|n, _| format!("{n:05}"))
+                                            .custom_formatter(|n, _| {
+                                                format!(
+                                                    "{}{:05}",
+                                                    if n.is_sign_positive() { "" } else { "-" },
+                                                    n.abs(),
+                                                )
+                                            })
                                             .clamp_range(-99999..=99999),
                                     );
                                 });
@@ -414,6 +422,11 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
                 }),
 
             Tab::AssemblyErrors => {
+                enforce_scrollback(&mut self.tide.error);
+
+                let slices = &self.tide.error.as_slices();
+                let mut error = format!("{}\n{}", slices.0.join("\n"), slices.1.join("\n"));
+
                 ui.add_sized(
                     ui.available_size(),
                     egui::TextEdit::multiline(&mut self.tide.error)
