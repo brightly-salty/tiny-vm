@@ -1030,7 +1030,7 @@ impl Default for Tide {
             error: VecDeque::new(),
 
             max_cpu_block_duration: DEFAULT_MAX_CPU_BLOCK_DURATION,
-            stop_on_error: false,
+            stop_on_error: DEFAULT_STOP_ON_ERROR,
 
             dock_state: default_dock_state(),
 
