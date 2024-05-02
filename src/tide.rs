@@ -147,7 +147,7 @@ struct TIDETabViewer<'a> {
     tide: &'a mut Tide,
 }
 
-fn text_editor(
+fn code_editor(
     s: &mut String,
     dirty: &mut bool,
     enabled: bool,
@@ -278,7 +278,7 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab {
             Tab::Source => {
-                text_editor(
+                code_editor(
                     &mut self.tide.source,
                     &mut self.tide.dirty,
                     self.tide.cpu_bundle.is_none(),
