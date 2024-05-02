@@ -816,22 +816,31 @@ impl Tide {
         Ok(())
     }
 
-    #[allow(clippy::missing_const_for_fn)]
+    fn step_into(&mut self) -> TinyResult<()> {
+        self.run_mode = RunMode::Pause;
+        self.step(Input::None)?;
+        Ok(())
+    }
+
     fn should_autostep(&self) -> bool {
-        matches!(
-            (&self.run_mode, &self.cpu_bundle),
-            (
-                RunMode::Run | RunMode::StepOver(_),
-                Some(CpuBundle {
-                    last_output: Output::ReadyToCycle
-                        | Output::JumpedToFunction
-                        | Output::ReturnedFromFunction
-                        | Output::Char(_)
-                        | Output::String(_),
-                    ..
-                }),
-            )
-        )
+        matches!((&self.run_mode, &self.cpu_bundle), (
+            RunMode::Run | RunMode::StepOver(_),
+            Some(CpuBundle {
+                cpu,
+                last_output:
+                    Output::ReadyToCycle
+                    | Output::JumpedToFunction
+                    | Output::ReturnedFromFunction
+                    | Output::Char(_)
+                    | Output::String(_),
+                ..
+            }),
+        ) if !self
+            .source_map
+            .get(&cpu.cu.ip)
+            .map_or_else(|| false, |line| self.breakpoints.contains(&(*line as u16))) && {
+            true
+        })
     }
 
     fn toggle_breakpoint(&mut self) {
@@ -1213,9 +1222,7 @@ impl eframe::App for Tide {
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&STEP_INTO_SHORTCUT)) {
-                _ = self
-                    .step(Input::None)
-                    .map_err(|err| self.focused_error(&err));
+                _ = self.step_into().map_err(|err| self.focused_error(&err));
             }
 
             if ui.input_mut(|i| i.consume_shortcut(&BREAKPOINT_SHORTCUT)) {
@@ -1343,9 +1350,7 @@ impl eframe::App for Tide {
                     }
 
                     if ui.button("Step Into").clicked() {
-                        _ = self
-                            .step(Input::None)
-                            .map_err(|err| self.focused_error(&err));
+                        _ = self.step_into().map_err(|err| self.focused_error(&err));
                     }
 
                     if ui.button("Toggle Breakpoint").clicked() {
