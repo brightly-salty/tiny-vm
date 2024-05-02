@@ -3,7 +3,7 @@
 #![allow(clippy::future_not_send)]
 
 use eframe::egui::{Ui, WidgetText};
-use egui::{text_selection::CursorRange, Color32, RichText, TextBuffer};
+use egui::{text_selection::CursorRange, TextBuffer};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{Receiver, Sender};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroU32,
     time::Instant,
 };
@@ -31,8 +31,6 @@ const MIN_CPU_BLOCK_DURATION: Duration = Duration::from_millis(3); // 334 FPS
 const MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(50); // 20 FPS
 
 const DEFAULT_STOP_ON_ERROR: bool = false;
-
-const MAX_SCROLLBACK: usize = 500;
 
 #[derive(Clone)]
 struct CpuBundle {
@@ -77,33 +75,6 @@ enum ReturnAsyncFile {
     New(bool),
     Open(OpenFileResult),
     Save(SaveFileResult),
-}
-
-fn scrollback_display(ui: &mut Ui, used_scrollback: usize, max: usize) -> egui::Response {
-    let amount = used_scrollback as f32 / max as f32;
-
-    ui.add(
-        egui::ProgressBar::new(amount)
-            .fill(Color32::from_rgb(
-                (amount * 255.0) as u8,
-                ((1.0 - amount) * 255.0) as u8,
-                0,
-            ))
-            .text(format!(
-                "{} ({} / {})",
-                if amount == 1.0 {
-                    "Scrollback full!"
-                } else if amount > 0.9 {
-                    "Scrollback almost full!"
-                } else if amount == 0.0 {
-                    "Scrollback empty"
-                } else {
-                    "Scrollback"
-                },
-                used_scrollback,
-                max
-            )),
-    )
 }
 
 #[derive(Clone, Copy)]
@@ -443,46 +414,27 @@ impl<'a> TabViewer for TIDETabViewer<'a> {
                 }),
 
             Tab::AssemblyErrors => {
-                scrollback_display(ui, self.tide.error.len(), MAX_SCROLLBACK);
-
-                egui::Grid::new("AssemblyErrors")
-                    .striped(true)
-                    .show(ui, |ui| {
-                        self.tide.error.iter().for_each(|text| {
-                            ui.add_sized(
-                                ui.available_size(),
-                                egui::Label::new(
-                                    match text {
-                                        (t, Some(line)) => t, // TODO: Do something with the line number
-                                        (t, None) => t,
-                                    }
-                                    .clone()
-                                    .code(),
-                                ),
-                            );
-                            ui.end_row();
-                        });
-                    });
+                ui.add_sized(
+                    ui.available_size(),
+                    egui::TextEdit::multiline(&mut self.tide.error)
+                        .code_editor()
+                        .interactive(false),
+                );
             }
 
             Tab::InputOutput => {
-                // Show the amount of scrollback used for output
-                scrollback_display(ui, self.tide.output.len(), MAX_SCROLLBACK);
-
                 let response = ui.text_edit_singleline(&mut self.tide.input);
 
                 if !matches!(self.tide.run_mode, RunMode::Pause) {
                     response.request_focus();
                 }
 
-                // TODO: Scroll to bottom automatically if the user most recently scrolled there
-                egui::Grid::new("OutputText").striped(true).show(ui, |ui| {
-                    self.tide.output.iter().for_each(|text| {
-                        ui.label(text.clone().code());
-                        ui.end_row();
-                    });
-                });
-
+                ui.add_sized(
+                    ui.available_size(),
+                    egui::TextEdit::multiline(&mut self.tide.output)
+                        .code_editor()
+                        .interactive(false),
+                );
                 ui.input(|i| {
                     if i.key_pressed(egui::Key::Enter) {
                         // If the Cpu is waiting for Input matching what we have, step it
@@ -675,10 +627,10 @@ struct Tide {
     input: String,
 
     #[serde(skip)]
-    output: VecDeque<RichText>,
+    output: String,
 
     #[serde(skip)]
-    error: VecDeque<(RichText, Option<u16>)>, // Optional line number
+    error: String,
 
     max_cpu_block_duration: Duration,
     stop_on_error: bool,
@@ -772,8 +724,7 @@ impl Tide {
     }
 
     fn focused_error(&mut self, s: &TinyError) {
-        self.error
-            .push_back((RichText::new(format!("{s}\n")).color(Color32::RED), None));
+        self.error.push_str(&s.to_string());
     }
 
     fn run(&mut self) -> TinyResult<()> {
@@ -800,15 +751,9 @@ impl Tide {
         if let Some(ref mut bundle) = self.cpu_bundle {
             // Forward our input to our output
             match input {
-                Input::Integer(i) => self
-                    .output
-                    .push_back(RichText::new(format!("{i}\n")).strong()),
-                Input::Char(c) => self
-                    .output
-                    .push_back(RichText::new(format!("{c}\n")).strong()),
-                Input::String(ref s) => self
-                    .output
-                    .push_back(RichText::new(format!("{s}\n")).strong()),
+                Input::Integer(i) => self.output.push_str(&format!("{i}\n")),
+                Input::Char(c) => self.output.push_str(&format!("{c}\n")),
+                Input::String(ref s) => self.output.push_str(&format!("{s}\n")),
                 Input::None => {}
             }
 
@@ -822,24 +767,12 @@ impl Tide {
 
             // Forward Cpu output to our output
             match &bundle.last_output {
-                Output::Stopped => self.error.push_back((
-                    RichText::new("Completed").background_color(Color32::GREEN),
-                    None,
-                )),
-                Output::Char(c) => self.output.push_back(RichText::new(*c)),
-                Output::String(s) => self.output.push_back(RichText::new(s)),
+                Output::Stopped => self.error.push_str("Completed"),
+                Output::Char(c) => self.output.push(*c),
+                Output::String(s) => self.output.push_str(s),
 
                 _ => {}
             };
-
-            // Ensure output buffers don't exceed scrollback
-            while self.output.len() > MAX_SCROLLBACK {
-                self.output.pop_front();
-            }
-
-            while self.error.len() > MAX_SCROLLBACK {
-                self.error.pop_front();
-            }
 
             // NOTE: Output::Stopped is not focused because it's likely the user would
             // prefer to see the Input/Output tab when their program runs to completion
@@ -878,7 +811,10 @@ impl Tide {
                 self.run_mode = RunMode::Pause;
             }
         } else {
-            return Err(TinyError::NotAssembledError);
+            // TODO: Actually error here somehow
+            /*return anyhow::Error::from(
+                "Attempt to step with no Cpu (is the program assembled?)".into(),
+            );*/
         }
 
         Ok(())
@@ -1026,8 +962,10 @@ impl Default for Tide {
             editing_registers: false,
 
             input: String::new(),
-            output: VecDeque::new(),
-            error: VecDeque::new(),
+
+            output: String::new(),
+
+            error: String::new(),
 
             max_cpu_block_duration: DEFAULT_MAX_CPU_BLOCK_DURATION,
             stop_on_error: DEFAULT_STOP_ON_ERROR,
