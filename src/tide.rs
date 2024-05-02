@@ -26,7 +26,9 @@ const EXAMPLES: [(&str, &str); 3] = [
     ("GCD", include_str!("../examples/gcd.tny")),
 ];
 
-const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(34); // About 30 FPS
+const DEFAULT_MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(16); // About 60 FPS
+const MIN_CPU_BLOCK_DURATION: Duration = Duration::from_millis(3); // 334 FPS
+const MAX_CPU_BLOCK_DURATION: Duration = Duration::from_millis(50); // 20 FPS
 
 const DEFAULT_STOP_ON_ERROR: bool = false;
 
@@ -76,7 +78,10 @@ enum ReturnAsyncFile {
 }
 
 #[derive(Clone, Copy)]
-struct UnappliedPreferences;
+struct UnappliedPreferences {
+    max_cpu_block_duration: Duration,
+    stop_on_error: bool,
+}
 
 fn ascii_char(c: u8) -> String {
     match c {
@@ -628,6 +633,7 @@ struct Tide {
     error: String,
 
     max_cpu_block_duration: Duration,
+    stop_on_error: bool,
 
     #[serde(skip, default = "default_dock_state")]
     dock_state: DockState<Tab>,
@@ -962,6 +968,7 @@ impl Default for Tide {
             error: String::new(),
 
             max_cpu_block_duration: DEFAULT_MAX_CPU_BLOCK_DURATION,
+            stop_on_error: false,
 
             dock_state: default_dock_state(),
 
@@ -1076,17 +1083,45 @@ impl eframe::App for Tide {
 
         let mut close_preferences = false;
 
-        if matches!(self.unapplied_preferences, Some(UnappliedPreferences)) {
-            egui::Window::new("Preferences")
-                .auto_sized()
-                .show(ctx, |ui| {
-                    ui.group(|ui| {
-                        ui.label("Theme");
-                        egui::global_dark_light_mode_buttons(ui);
-                    });
+        match &mut self.unapplied_preferences {
+            Some(UnappliedPreferences {
+                ref mut max_cpu_block_duration,
+                ref mut stop_on_error,
+            }) => {
+                egui::Window::new("Preferences")
+                    .auto_sized()
+                    .show(ctx, |ui| {
+                        ui.group(|ui| {
+                            ui.label("Theme");
+                            egui::global_dark_light_mode_buttons(ui);
+                        });
 
-                    close_preferences = ui.button("Close").clicked();
-                });
+                        ui.group(|ui| {
+                            ui.label("CPU");
+
+                            let mut v = max_cpu_block_duration.as_secs_f32();
+                            let min: f32 = MIN_CPU_BLOCK_DURATION.as_secs_f32();
+                            let max: f32 = MAX_CPU_BLOCK_DURATION.as_secs_f32();
+
+                            ui.add(
+                                egui::Slider::new(&mut v, min..=max).text("Max CPU time per frame"),
+                            );
+
+                            *max_cpu_block_duration = Duration::from_secs_f32(v);
+
+                            ui.checkbox(stop_on_error, "Pause on error");
+                        });
+
+                        close_preferences = ui.button("Done").clicked();
+
+                        if close_preferences {
+                            self.max_cpu_block_duration = *max_cpu_block_duration;
+                            self.stop_on_error = *stop_on_error;
+                        }
+                    });
+            }
+
+            None => {}
         }
 
         if close_preferences {
@@ -1300,7 +1335,10 @@ impl eframe::App for Tide {
 
                 ui.menu_button("Edit", |ui| {
                     if ui.button("Preferences").clicked() {
-                        self.unapplied_preferences = Some(UnappliedPreferences);
+                        self.unapplied_preferences = Some(UnappliedPreferences {
+                            max_cpu_block_duration: self.max_cpu_block_duration,
+                            stop_on_error: self.stop_on_error,
+                        });
 
                         ui.close_menu();
                     }
