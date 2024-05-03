@@ -1,57 +1,58 @@
 jmp main
 
-x:	ds 1
-y:	ds 1
-msg1:	dc "Enter two numbers: "
+x:    ds 1            ;   int x, y;
+y:    ds 1
+msg1:  dc "Enter two numbers: "
 
-gcd_x: ds 1
-gcd_y: ds 1
-gcd_t: ds 1
-neg1: db -1
+gcd_x:   ds 1
+gcd_y:   ds 1
+gcd_t:   ds 1         ;   int t;
+neg1:   db -1
 
-gcd:
-	ldparam 1
-	st gcd_x
-	ldparam 2
-	st gcd_y
-	ld x
-	div y
-	mul y
-	sub x
-	mul neg1
-	st gcd_t
+gcd:                  ; int GCD(int x, int y) {
+  ldparam 1
+  st gcd_x
+  ldparam 2
+  st gcd_y
+  ld gcd_x            ;   t = x % y;
+  div gcd_y
+  mul gcd_y
+  sub gcd_x
+  mul neg1
+  st gcd_t
 
-gcd_while_1:
-	ld gcd_t
-	jg gcd_while_1_begin
-	jmp gcd_while_1_end
+gcd_while_1:          ;   while (t > 0)
+  ld gcd_t
+  jg gcd_while_1_begin
+  jmp gcd_while_1_end
 
-gcd_while_1_begin:
-	ld y
-	st x
-	ld gcd_t
-	st y
-	ld x
-	div y
-	mul y
-	sub x
-	mul neg1
-	st gcd_t
+gcd_while_1_begin:    ;    {
+  ld gcd_y            ;      x = y;
+  st gcd_x
+  ld gcd_t            ;      y = t;
+  st gcd_y
+  ld gcd_x            ;      t = x % y;
+  div gcd_y
+  mul gcd_y
+  sub gcd_x
+  mul neg1
+  st gcd_t
 
-gcd_while_1_end:
-	ld gcd_y
-	ret
+gcd_while_1_end:      ;   }
+  ld gcd_y            ;   return y;
+  ret                 ; }
 
-main:
-	lda msg1
-	call printString
-	call inputInteger
-	st x
-	call inputInteger
-	st y
-	push y
-	push x
-	call gcd
-	pop
-	pop
-	call printInteger
+main:                 ; int main() {
+  lda msg1            ;    cout << "Enter two numbers: ";
+  call printString
+  call inputInteger   ;   cin >> x << y;
+  st x
+  call inputInteger
+  st y
+  push y              ;   cout << gcd(x, y);
+  push x
+  call gcd
+  call printInteger
+  pop
+  pop
+  stop               ; }

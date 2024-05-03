@@ -1,46 +1,46 @@
 jmp main
 
-height: 	db 1
-length: 	db 1
-width: 	 db 1
-area: 	  db 1
-volume: 	db 1
-msg1:	   dc "Enter height, length, width: "
-msg2:       dc "Volume is "
-endl:       dc "\n"
+height:   db 1      ; int height,length,width,area,volume;
+length:   db 1
+width:      db 1
+area:     db 1
+volume:   db 1
+msg1:     dc "Enter height, length, width: "
+msg2:    dc "Volume is "
+endl:    dc "\n"
 
-main:
-	lda msg1
-	call printString
-	call inputInteger
-	st height
-	call inputInteger
-	st length
-	call inputInteger
-	st width
+main:                ; int main() {
+  lda msg1           ;   cout << "What was your score? ";
+  call printString
+  call inputInteger  ;   cin >> height >> length >> width;
+  st height
+  call inputInteger
+  st length
+  call inputInteger
+  st width
 
-if_1:
-	ld height
-	mul length
-	mul width
-	jg if_1_begin
-	jmp if_1_end                               ;
+if_1:                ;    if (height * length * width > 0)
+  ld height
+  mul length
+  mul width
+  jg if_1_begin
+  jmp if_1_end       ; {
 
-if_1_begin:
-	ld height
-	mul length
-	st area
-	mul width
-	st volume
-	lda msg2
-	call printString
-	ld volume
-	call printInteger
-	lda endl
-	call printString
+if_1_begin:          ;    {
+  ld height          ;        area = height * length;
+  mul length
+  st area
+  mul width          ;        volume = area * width;
+  st volume
+  lda msg2           ;        cout << "Volume is " << volume << endl;
+  call printString
+  ld volume
+  call printInteger
+  lda endl
+  call printString
 
-if_1_end:
-	stop
+if_1_end:            ;    }
+  stop               ; }
 
   
-	
+  
