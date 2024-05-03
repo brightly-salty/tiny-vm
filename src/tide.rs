@@ -100,45 +100,16 @@ struct UnappliedPreferences {
     stop_on_error: bool,
 }
 
-fn ascii_char(c: u8) -> String {
-    match c {
-        0 => "NUL".to_owned(),
-        1 => "SOH".to_owned(),
-        2 => "STX".to_owned(),
-        3 => "ETX".to_owned(),
-        4 => "EOT".to_owned(),
-        5 => "ENQ".to_owned(),
-        6 => "ACK".to_owned(),
-        7 => "BEL".to_owned(),
-        8 => "BS".to_owned(),
-        9 => "HT".to_owned(),
-        10 => "LF".to_owned(),
-        11 => "VT".to_owned(),
-        12 => "FF".to_owned(),
-        13 => "CR".to_owned(),
-        14 => "SO".to_owned(),
-        15 => "SI".to_owned(),
-        16 => "DLE".to_owned(),
-        17 => "DC1".to_owned(),
-        18 => "DC2".to_owned(),
-        19 => "DC3".to_owned(),
-        20 => "DC4".to_owned(),
-        21 => "NAK".to_owned(),
-        22 => "SYN".to_owned(),
-        23 => "ETB".to_owned(),
-        24 => "CAN".to_owned(),
-        25 => "EM".to_owned(),
-        26 => "SUB".to_owned(),
-        27 => "ESC".to_owned(),
-        28 => "FS".to_owned(),
-        29 => "GS".to_owned(),
-        30 => "RS".to_owned(),
-        31 => "US".to_owned(),
-        32 => "SP".to_owned(),
-        127 => "DEL".to_owned(),
-        c => String::from_utf8_lossy(&[c]).into_owned(),
-    }
-}
+const ASCII_CHARS: [&str; 128] = [
+    "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR",
+    "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC",
+    "FS", "GS", "RS", "US", "SP", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-",
+    ".", "/", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@",
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S",
+    "T", "U", "V", "W", "X", "Y", "Z", "[", "\\", "]", "^", "_", "`", "a", "b", "c", "d", "e", "f",
+    "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y",
+    "z", "{", "|", "}", "~", "DEL",
+];
 
 // Native
 #[cfg(not(target_arch = "wasm32"))]
@@ -1260,7 +1231,7 @@ impl eframe::App for Tide {
                                 for column in 0..4 {
                                     let index = row + 32 * column;
 
-                                    ui.monospace(format!("{:<4} {:<3}", index, ascii_char(index)));
+                                    ui.monospace(format!("{:<4} {:<3}", index, ASCII_CHARS[index]));
 
                                     if column != 3 {
                                         ui.separator();
