@@ -3,9 +3,9 @@ jmp main
 msg: dc "Hello world!"
 endl: dc "\n"
 
-main:
-	lda msg
-	call printString
-	lda endl
-	call printString
-	stop
+main:                ; int main() {
+  lda msg            ;   cout << "Hello World!" << endl;
+  call printString
+  lda endl
+  call printString
+  stop               ; }
