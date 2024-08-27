@@ -31,6 +31,7 @@ pollster = "0.3.0"
 [build-dependencies]
 vergen = {version = "8.3.1", features = ["build", "git", "gitcl"]}
 anyhow = "1.0.82"
+embed-resource = "2.4"
 
 [[bin]]
 name = "tiny-vm"
