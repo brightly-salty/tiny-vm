@@ -1367,7 +1367,7 @@ impl eframe::App for Tide {
 
             self.dock_state = dock_state;
 
-            if self.running_to_completion | self.stepping_over {
+            if self.running_to_completion || self.stepping_over {
                 self.step();
             } else if self.input_ready {
                 match (&self.cpu_state, &self.input) {
